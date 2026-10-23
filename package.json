@@ -1,0 +1,10 @@
+{
+  "name": "pi-ryker",
+  "version": "0.0.0",
+  "description": "Ryker: extensão do pi que trava o fluxo de 6 etapas no harness. Em construção.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DavyMassoneto/pi-ryker.git"
+  },
+  "files": ["README.md"]
+}
