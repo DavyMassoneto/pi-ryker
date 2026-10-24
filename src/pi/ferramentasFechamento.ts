@@ -3,11 +3,13 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
   comandoAbrir,
+  deveAbrir,
   podeGerarDocumento,
   renderizar,
   validarSinteses,
 } from "../core/documento.ts";
-import { aplicarTemas, aprovar, etapaAtiva, type ItemTema } from "../core/estado.ts";
+import { aplicarTemas, etapaAtiva, type ItemTema } from "../core/estado.ts";
+import { textoReabertos } from "../core/reabertura.ts";
 import {
   aplicarResolucoes,
   pendentes,
@@ -18,6 +20,7 @@ import {
 } from "../core/revisao.ts";
 import { textoStatus } from "../core/status.ts";
 import { temasAbertos } from "../core/temas.ts";
+import { dialogoAprovacao } from "./aprovacao.ts";
 import { gravarDocumento, lerEstado, salvarEstado } from "./persistencia.ts";
 import { executarRevisor } from "./revisor.ts";
 
@@ -191,42 +194,24 @@ export function registrarFerramentasFechamento(pi: ExtensionAPI): void {
         documento: { caminho: ".ryker/visao.html", geradoEm: agora() },
       };
       salvarEstado(pi, ctx.cwd, estado);
-      const abrir = comandoAbrir(process.platform, caminho);
-      try {
-        // O código de saída não é erro (o explorer devolve 1 ao abrir com sucesso).
-        await pi.exec(abrir.comando, abrir.args, { timeout: 15000 });
-      } catch {
-        ctx.ui.notify(`Não consegui abrir o navegador. Abra manualmente: ${caminho}`, "warning");
+      let avisoCaminho = "";
+      if (deveAbrir(process.env)) {
+        const abrir = comandoAbrir(process.platform, caminho);
+        try {
+          // O código de saída não é erro (o explorer devolve 1 ao abrir com sucesso).
+          await pi.exec(abrir.comando, abrir.args, { timeout: 15000 });
+        } catch {
+          ctx.ui.notify(`Não consegui abrir o navegador. Abra manualmente: ${caminho}`, "warning");
+        }
+      } else {
+        // RYKER_ABRIR=0: não abre janela; só registra o caminho.
+        ctx.ui.notify(`Documento: ${caminho}`, "info");
+        avisoCaminho = ` Documento: ${caminho}`;
       }
 
-      const en = estado.idioma === "en";
-      const APROVAR = en ? "Approve" : "Aprovar";
-      const CORRIGIR = en ? "Fix points" : "Corrigir pontos";
-      const escolha = await ctx.ui.select(
-        en ? "Vision document ready. Approve?" : "Documento de visão pronto. Aprovar?",
-        [APROVAR, CORRIGIR],
-      );
-      const aviso = docFinal.aviso ? ` ${docFinal.aviso}` : "";
-
-      if (escolha === APROVAR) {
-        const ap = aprovar(estado, agora());
-        salvarEstado(pi, ctx.cwd, ap.estado);
-        // Restauração direta. Plano B, se o setModel dentro do execute der problema:
-        // guardar a intenção e restaurar o modelo em um handler de "agent_settled".
-        pi.setActiveTools(ap.ferramentas);
-        if (ap.modelo) {
-          const m = ctx.modelRegistry
-            .getAvailable()
-            .find((x) => x.provider === ap.modelo?.provider && x.id === ap.modelo?.id);
-          if (m) await pi.setModel(m);
-        }
-        ctx.ui.setStatus("ryker", undefined);
-        ctx.ui.notify(
-          en
-            ? "Vision approved. Model and tools restored."
-            : "Visão aprovada. Modelo e ferramentas restaurados.",
-          "info",
-        );
+      const aviso = `${docFinal.aviso ? ` ${docFinal.aviso}` : ""}${avisoCaminho}`;
+      const r = await dialogoAprovacao(pi, ctx, estado);
+      if (r.resultado === "aprovada") {
         return {
           ...texto(
             `Documento aprovado pelo usuário (${join(".ryker", "visao.html")}). A Discussão Global terminou; não escreva mais nada.${aviso}`,
@@ -235,12 +220,15 @@ export function registrarFerramentasFechamento(pi: ExtensionAPI): void {
           terminate: true,
         };
       }
-      // Corrigir pontos (ou Esc): o laço de reabertura completo é F5.
+      if (r.resultado === "reaberta") {
+        return {
+          ...texto(textoReabertos(r.itens)),
+          details: { aprovado: false, reabertos: r.itens },
+        };
+      }
       return {
         ...texto(
-          escolha === CORRIGIR
-            ? `O usuário pediu correções, mas a reabertura de temas ainda não está implementada. Diga isso em uma frase e aguarde a próxima mensagem dele.${aviso}`
-            : `O usuário não decidiu (Esc). Não insista; aguarde a próxima mensagem dele.${aviso}`,
+          `O usuário não decidiu (Esc). Não insista; aguarde a próxima mensagem dele.${aviso}`,
         ),
         details: { aprovado: false },
       };

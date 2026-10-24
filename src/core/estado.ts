@@ -110,7 +110,7 @@ export type ResultadoTemas = { ok: true; estado: Estado } | { ok: false; erro: s
 
 const vazio = (v: string | undefined): boolean => v === undefined || v.trim() === "";
 
-function slug(titulo: string): string {
+export function slug(titulo: string): string {
   const base = titulo
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")

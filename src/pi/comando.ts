@@ -2,8 +2,10 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { criarEstado, type Estado, etapaAtiva, type ModeloRef } from "../core/estado.ts";
 import { conjuntoDaEtapa } from "../core/ferramentasAtivas.ts";
 import { escolherOpus, rotuloModelo } from "../core/modelo.ts";
+import { textoReabertos } from "../core/reabertura.ts";
 import { textoStatus } from "../core/status.ts";
-import { lerEstado, salvarEstado } from "./persistencia.ts";
+import { dialogoAprovacao, lacoCorrecao, reabrirEGravar } from "./aprovacao.ts";
+import { arquivarAprovada, lerEstado, salvarEstado } from "./persistencia.ts";
 
 /** Define o modelo da etapa: Opus se houver; devolve undefined se o usuário desistir. */
 async function escolherModeloEtapa(
@@ -42,7 +44,7 @@ async function escolherModeloEtapa(
 
 export function registrarComando(pi: ExtensionAPI): void {
   pi.registerCommand("ryker", {
-    description: "Inicia a Discussão Global do Ryker: /ryker <pedido>",
+    description: "Discussão Global do Ryker: /ryker <pedido> | /ryker reabrir | /ryker (status)",
     async handler(args, ctx) {
       const pedido = args.trim();
       const leitura = lerEstado(ctx.cwd);
@@ -55,21 +57,58 @@ export function registrarComando(pi: ExtensionAPI): void {
       }
       const existente = leitura.tipo === "ok" ? leitura.estado : undefined;
 
+      if (pedido === "reabrir") {
+        if (!etapaAtiva(existente)) {
+          ctx.ui.notify("Não há Discussão Global ativa para reabrir.", "warning");
+          return;
+        }
+        if (!ctx.hasUI) return;
+        const itens = await lacoCorrecao(ctx, existente);
+        if (!itens) {
+          ctx.ui.notify("Nenhum tema reaberto.", "info");
+          return;
+        }
+        if (reabrirEGravar(pi, ctx, existente, itens)) {
+          pi.setActiveTools(conjuntoDaEtapa());
+          pi.sendUserMessage(textoReabertos(itens));
+        }
+        return;
+      }
+
       if (etapaAtiva(existente)) {
-        ctx.ui.notify(
-          pedido
-            ? `Já existe uma Discussão Global ativa (${textoStatus(existente)}). Termine-a antes de iniciar outra.`
-            : textoStatus(existente),
-          "info",
-        );
+        if (pedido) {
+          ctx.ui.notify(
+            `Já existe uma Discussão Global ativa (${textoStatus(existente)}). Termine-a antes de iniciar outra.`,
+            "info",
+          );
+          return;
+        }
+        ctx.ui.notify(textoStatus(existente), "info");
+        if (existente.fase === "aprovacao" && ctx.hasUI) {
+          const r = await dialogoAprovacao(pi, ctx, existente);
+          if (r.resultado === "reaberta") {
+            pi.setActiveTools(conjuntoDaEtapa());
+            pi.sendUserMessage(textoReabertos(r.itens));
+          }
+        }
         return;
       }
       if (existente) {
-        ctx.ui.notify(
-          "Há uma discussão aprovada neste projeto; arquivá-la para iniciar outra ainda não é suportado.",
-          "warning",
+        if (!pedido) {
+          ctx.ui.notify("Discussão aprovada. /ryker <pedido> inicia outra.", "info");
+          return;
+        }
+        if (!ctx.hasUI) return;
+        const arquivar = await ctx.ui.confirm(
+          "Arquivar a discussão aprovada?",
+          "Ela será movida para .ryker/arquivo/ e passa a contar como decisão existente.",
         );
-        return;
+        if (!arquivar) {
+          ctx.ui.notify("Discussão Global cancelada.", "info");
+          return;
+        }
+        const pasta = arquivarAprovada(ctx.cwd, existente);
+        ctx.ui.notify(`Discussão arquivada em ${pasta}.`, "info");
       }
       if (!pedido) {
         ctx.ui.notify("Uso: /ryker <pedido>", "warning");

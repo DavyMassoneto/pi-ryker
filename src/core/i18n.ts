@@ -7,6 +7,7 @@ export interface Rotulos {
   pergunta: [singular: string, plural: string];
   temaAberto: [singular: string, plural: string];
   pausada: string;
+  concluir: string;
 }
 
 const PT: Rotulos = {
@@ -16,6 +17,7 @@ const PT: Rotulos = {
   pergunta: ["pergunta", "perguntas"],
   temaAberto: ["tema aberto", "temas abertos"],
   pausada: "pausada",
+  concluir: "Concluir",
 };
 
 const EN: Rotulos = {
@@ -25,6 +27,7 @@ const EN: Rotulos = {
   pergunta: ["question", "questions"],
   temaAberto: ["open topic", "open topics"],
   pausada: "paused",
+  concluir: "Done",
 };
 
 /** Rótulos do código em pt e en; outros idiomas caem em en. */

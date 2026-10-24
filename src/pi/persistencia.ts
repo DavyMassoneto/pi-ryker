@@ -1,7 +1,8 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Estado } from "../core/estado.ts";
+import { caminhoArquivamento } from "../core/restauracao.ts";
 import { desserializar, serializar } from "../core/serializacao.ts";
 
 export const TIPO_ENTRADA = "ryker-discussao";
@@ -58,4 +59,16 @@ export function salvarEstado(pi: ExtensionAPI, cwd: string, estado: Estado): voi
 export function estadoAtivo(cwd: string): Estado | undefined {
   const l = lerEstado(cwd);
   return l.tipo === "ok" && l.estado.fase !== "aprovada" ? l.estado : undefined;
+}
+
+/** Move discussao.json (e visao.html) da discussão aprovada para `.ryker/arquivo/<data>-<slug>/`. */
+export function arquivarAprovada(cwd: string, estado: Estado): string {
+  const rel = caminhoArquivamento(estado);
+  let pasta = join(cwd, rel);
+  for (let n = 2; existsSync(pasta); n++) pasta = join(cwd, `${rel}-${n}`);
+  mkdirSync(pasta, { recursive: true });
+  renameSync(caminhoDiscussao(cwd), join(pasta, "discussao.json"));
+  const visao = join(pastaRyker(cwd), "visao.html");
+  if (existsSync(visao)) renameSync(visao, join(pasta, "visao.html"));
+  return pasta;
 }

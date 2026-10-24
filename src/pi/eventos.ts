@@ -1,9 +1,21 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { FERRAMENTA_BLOQUEADA, semPerguntaNativa } from "../core/ferramentasAtivas.ts";
+import type { Estado } from "../core/estado.ts";
+import {
+  conjuntoDaEtapa,
+  FERRAMENTA_BLOQUEADA,
+  semPerguntaNativa,
+} from "../core/ferramentasAtivas.ts";
 import { CONTADORES_ZERO, decidirContinuacao, TIPO_CORRECAO } from "../core/guarda.ts";
 import { secaoPrompt } from "../core/prompt.ts";
+import { decidirRestauracao } from "../core/restauracao.ts";
 import { textoStatus } from "../core/status.ts";
-import { estadoAtivo, lerEstado, salvarEstado } from "./persistencia.ts";
+import {
+  estadoAtivo,
+  gravarEstado,
+  lerEstado,
+  salvarEstado,
+  TIPO_ENTRADA,
+} from "./persistencia.ts";
 
 export const SECAO_PROMPT = "ryker_discussao";
 
@@ -77,16 +89,40 @@ export function registrarEventos(pi: ExtensionAPI): void {
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    const leitura = lerEstado(ctx.cwd);
-    if (leitura.tipo === "corrompido") {
-      ctx.ui.notify(`.ryker/discussao.json ilegível: ${leitura.erro}`, "warning");
-      return;
+    const entradas: Estado[] = [];
+    for (const e of ctx.sessionManager.getBranch()) {
+      if (e.type === "custom" && e.customType === TIPO_ENTRADA && e.data) {
+        entradas.push(e.data as Estado);
+      }
     }
-    if (leitura.tipo === "ok" && leitura.estado.fase !== "aprovada") {
-      ctx.ui.notify(
-        `Discussão Global ativa (${textoStatus(leitura.estado)}). /ryker para ver o status.`,
-        "info",
-      );
+    const decisao = decidirRestauracao(lerEstado(ctx.cwd), entradas);
+    switch (decisao.acao) {
+      case "corrompido":
+        ctx.ui.notify(`.ryker/discussao.json ilegível: ${decisao.erro}`, "warning");
+        return;
+      case "recriar":
+        gravarEstado(ctx.cwd, decisao.estado);
+        ctx.ui.notify("Recriei .ryker/discussao.json pelo último snapshot da sessão.", "info");
+        return;
+      case "avisar":
+        ctx.ui.notify(
+          `Discussão Global ativa (${textoStatus(decisao.estado)}). /ryker para retomar.`,
+          "info",
+        );
+        return;
+      case "reaplicar": {
+        // Sessão que já tem entradas Ryker: reaplica ferramentas, modelo e status.
+        pi.setActiveTools(conjuntoDaEtapa());
+        const ref = decisao.estado.modeloEtapa;
+        if (ref && !(ctx.model?.provider === ref.provider && ctx.model?.id === ref.id)) {
+          const m = ctx.modelRegistry.find(ref.provider, ref.id);
+          if (m) await pi.setModel(m);
+        }
+        ctx.ui.setStatus("ryker", textoStatus(decisao.estado));
+        return;
+      }
+      default:
+        return;
     }
   });
 }

@@ -1,6 +1,6 @@
 import type { Estado, Idioma } from "./estado.ts";
 import { rotulos } from "./i18n.ts";
-import { achaTema } from "./temas.ts";
+import { achaTema, type Tema } from "./temas.ts";
 
 /** Rótulo fixo em pt (o idioma padrão da UI). */
 export const OUTRA_RESPOSTA = rotulos("pt").outraResposta;
@@ -74,6 +74,12 @@ export function interpretarEscolha(
   return i >= 0 ? { tipo: "opcao", texto: p.opcoes[i] } : { tipo: "cancelado" };
 }
 
+/** A reabertura termina quando o tema volta a fechar por pergunta (o histórico já guarda o anterior). */
+function semReabertura(t: Tema): Tema {
+  const { reabertura: _r, ...resto } = t;
+  return resto;
+}
+
 /** Grava a resposta e fecha o tema como decidido. Não muta o estado recebido. */
 export function registrarResposta(
   estado: Estado,
@@ -104,7 +110,7 @@ export function registrarResposta(
     temas: estado.temas.map((t) =>
       t.id === p.tema
         ? {
-            ...t,
+            ...semReabertura(t),
             status: "decidido" as const,
             texto: `${p.pergunta} → ${resposta}`,
             quando: agora,

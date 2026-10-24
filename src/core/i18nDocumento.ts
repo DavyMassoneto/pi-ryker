@@ -42,6 +42,7 @@ export interface RotulosDoc {
   livre: string;
   aviso: string;
   apendice: string;
+  suposicao: string;
   apendiceNota: string;
 }
 
@@ -50,6 +51,7 @@ export function rotulosDoc(idioma: Idioma | string): RotulosDoc {
   return idioma === "pt"
     ? {
         secoes: SECOES_PT,
+        suposicao: "Suposição do agente, não decidida pelo usuário",
         apendice: "Apêndice: observações do revisor",
         apendiceNota: "Pontos não bloqueantes. Conteste o que discordar.",
         pedido: "Pedido original",
@@ -67,6 +69,7 @@ export function rotulosDoc(idioma: Idioma | string): RotulosDoc {
       }
     : {
         secoes: SECOES_EN,
+        suposicao: "Agent assumption, not decided by the user",
         apendice: "Appendix: reviewer notes",
         apendiceNota: "Non-blocking points. Challenge anything you disagree with.",
         pedido: "Original request",

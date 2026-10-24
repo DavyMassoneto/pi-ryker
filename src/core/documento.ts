@@ -61,16 +61,28 @@ function textoOrigem(estado: Estado, o: Origem | undefined): string {
   return r.agente;
 }
 
+/** Decisão a mostrar: para tema respondido pelo usuário, a resposta (o par fica no registro). */
+function textoDecisao(estado: Estado, t: Tema): string {
+  if (t.origem?.tipo === "usuario") {
+    const id = t.origem.perguntaId;
+    const resposta = estado.perguntas.find((p) => p.id === id)?.resposta;
+    if (resposta) return resposta;
+  }
+  return t.texto ?? "";
+}
+
 function blocoTema(estado: Estado, t: Tema, detalhes: boolean): string {
   const r = rotulosDoc(estado.idioma);
   const extra: string[] = [];
+  if (t.status === "suposto")
+    extra.push(`<p class="meta"><strong>${esc(r.suposicao)}</strong></p>`);
   if (detalhes && t.motivo) {
     extra.push(`<p class="meta">${esc(r.porque)}: ${esc(t.motivo)}</p>`);
   }
   if (detalhes && t.status === "adiado" && t.quando) {
     extra.push(`<p class="meta">${esc(r.decidirQuando)}: ${esc(t.quando)}</p>`);
   }
-  return `<article data-tema="${esc(t.id)}"><h3>${esc(t.titulo)}</h3>${paragrafos(t.texto ?? "")}${extra.join("")}</article>`;
+  return `<article data-tema="${esc(t.id)}"><h3>${esc(t.titulo)}</h3>${paragrafos(textoDecisao(estado, t))}${extra.join("")}</article>`;
 }
 
 const CSS = `:root{color-scheme:light dark;--fg:#1d1d1f;--bg:#fff;--mut:#6b6b70;--bd:#d8d8de;--ac:#3b5bdb}
@@ -105,7 +117,7 @@ export function renderizar(
       ...temas.map((t) => blocoTema(estado, t, false)),
     ].join("");
     if (sint) texto.push(sint.texto);
-    for (const t of temas) texto.push(`${t.titulo}: ${t.texto ?? ""}`);
+    for (const t of temas) texto.push(`${t.titulo}: ${textoDecisao(estado, t)}`);
     secoes.push(
       `<section id="s${n}"><h2>${n}. ${esc(r.secoes[n - 1])}</h2>${corpo || vazio}</section>`,
     );
@@ -163,4 +175,10 @@ export function comandoAbrir(plataforma: string, caminho: string): ComandoAbrir 
   if (plataforma === "win32") return { comando: "cmd", args: ["/c", "start", "", caminho] };
   if (plataforma === "darwin") return { comando: "open", args: [caminho] };
   return { comando: "xdg-open", args: [caminho] };
+}
+
+/** Abrir o documento no navegador é o padrão; RYKER_ABRIR=0 (ou false) desliga, p.ex. nos E2E. */
+export function deveAbrir(env: Record<string, string | undefined>): boolean {
+  const v = env.RYKER_ABRIR?.trim().toLowerCase();
+  return v !== "0" && v !== "false";
 }
