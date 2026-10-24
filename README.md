@@ -4,11 +4,13 @@ Extensão do [pi](https://pi.dev) com a etapa de Discussão Global do método Ry
 
 ## Instalar
 
+A partir de uma cópia local do repositório:
+
 ```
-pi install npm:pi-ryker
+pi install <caminho da pasta pi-ryker>
 ```
 
-Ou, a partir de uma cópia local: `pi install <caminho da pasta>`.
+A versão 0.1.0 ainda não está publicada no npm (lá só existe o placeholder 0.0.x). Depois de publicada: `pi install npm:pi-ryker`.
 
 ## Usar
 

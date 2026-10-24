@@ -120,6 +120,17 @@ tsconfig: `strict`, `noEmit`, `module`/`moduleResolution: nodenext`, `allowImpor
 29. Trabalho na branch `dev`; a versão sobe para 0.1.0 só no fim; merge na main = publicação (ver pergunta macro).
 30. Pré-requisito dos E2E: `rpc-driver.js` passa a ler o timeout de `RPC_TIMEOUT_MS` (edição de 1 linha no script que já existe; não é ferramenta nova). Fluxos que pedem respostas diferentes em cada diálogo (Outra resposta + Aprovar, Corrigir pontos) são verificados no pi-web isolado, clicando.
 
+Suposições acrescentadas durante a construção e depois da revisão (`docs/revisao.md`):
+31. Pergunta em texto livre não tem bloqueio real (o stream sai antes de qualquer hook, risco (a)): é corrigida depois do fato por `agent_before_settle`. A guarda não usa `context.canContinue`, que é sempre falso nesse ponto quando a última mensagem é do assistente (`agent-session.js:616-635`).
+32. `RYKER_ABRIR=0` desliga a abertura no navegador e só registra o caminho. Os testes usam sempre essa chave; só o uso real abre.
+33. O campo `exigeDecisaoMacro` do revisor é vinculante: só achado com `true` pode ser resolvido criando tema e perguntando. Bloqueante com `false` se resolve sem perguntar (nova síntese ou revisão da suposição do agente). Motivo: no método antigo, 57% das perguntas vieram de achados de revisor.
+34. O revisor lê o mesmo documento que o usuário vê, gerado da mesma estrutura do HTML, com o pedido original rotulado à parte.
+35. O agente pode revisar a própria suposição (fica no histórico); tema decidido pelo usuário continua intocável pelo agente (decisão 10). Tema substituído via `revisa` sai das seções 1–10 e fica só no registro.
+36. Depois de "Corrigir pontos" não há nova revisão (decisão 12: 1 rodada).
+37. Temas base podem ser fechados por fonte ou suposição quando o teste de macro (decisões 3 e 4) diz que há padrão razoável; o usuário aprova as suposições em bloco no documento (decisão 9).
+38. `/ryker reabrir` só funciona com discussão ativa: aprovar encerra a etapa. Para mudar uma visão aprovada, começa-se uma discussão nova, e a aprovada vai para `.ryker/arquivo/`.
+39. A regra de custo visível (D-METODO-2) é do processo de construção, não do produto: a etapa não mostra o custo ao aprovar.
+
 ## 3. Fatias verticais
 
 Preparação comum dos E2E (Git Bash). Projeto-alvo de teste fora do repo: `D:\rk\novo\alvo`, com um `README.md` curto que já responde 3–4 temas (ex.: público, o que fica fora, uma restrição) e deixa outros em aberto. Cada execução começa sem a pasta `.ryker` do alvo (apagar à mão entre execuções, só dentro de `D:\rk\novo\alvo`).
