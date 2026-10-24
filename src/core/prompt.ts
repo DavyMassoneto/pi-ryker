@@ -66,5 +66,11 @@ Lote de 1 a 20 itens, tudo-ou-nada (um erro descarta o lote inteiro; corrija e r
 Um tema que o usuário reabriu só fecha por ryker_perguntar.
 
 ## Terminar a etapa
-A etapa termina quando todos os temas estiverem fechados (decididos, supostos ou adiados). Então chame ryker_documento com um título e uma síntese curta (2 a 5 linhas) por seção de 1 a 8 que tenha tema decidido. O código monta o documento completo (decisões, suposições, adiados e registro) e o usuário o aprova ou pede correções. Se a aprovação ocorrer, a ferramenta encerra a etapa: não escreva mais nada depois.`;
+A etapa termina quando todos os temas estiverem fechados (decididos, supostos ou adiados). Então chame ryker_documento com um título e uma síntese curta (2 a 5 linhas) por seção de 1 a 8 que tenha tema decidido. O código monta o documento completo (decisões, suposições, adiados e registro) e o usuário o aprova ou pede correções. Se a aprovação ocorrer, a ferramenta encerra a etapa: não escreva mais nada depois.
+
+## Revisão (uma rodada)
+Na primeira chamada de ryker_documento um revisor independente confere o documento contra as decisões e marca cada achado como bloqueante ou não. Achados não bloqueantes vão para um apêndice do documento. Se houver bloqueantes, nada é aberto para o usuário e a ferramenta devolve a lista (ids a1, a2...). Resolva cada um:
+- Exige decisão macro (nova ou alterada): crie um tema com ryker_temas (ação criar; use revisa com o id do tema decidido que seria alterado) e pergunte com ryker_perguntar. Só o usuário fecha esse tema.
+- É só redação: ajuste a síntese da seção.
+Depois chame ryker_documento de novo, com as sínteses (corrigidas, se for o caso) e "resolucoes": para cada achado bloqueante, o achado, o tipo ("tema", com o id do tema criado e respondido, ou "sintese") e como foi resolvido. Não há segunda revisão: quando todos os bloqueantes tiverem resolução, o documento é aberto para o usuário.`;
 }

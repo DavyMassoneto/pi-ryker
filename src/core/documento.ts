@@ -133,6 +133,19 @@ export function renderizar(
   secoes.push(
     `<section id="s11"><h2>11. ${esc(r.secoes[10])}</h2><p class="meta">${esc(r.pedido)}: ${esc(estado.pedido)}</p><ul>${[...itensPerguntas, ...itensTemas].join("")}</ul></section>`,
   );
+  const menores = (estado.revisao?.achados ?? []).filter((x) => !x.bloqueante);
+  if (menores.length) {
+    const itens = menores
+      .map(
+        (x) =>
+          `<li data-achado="${esc(x.id)}">${esc(x.texto)}${x.tema ? ` <span class="meta">(${esc(x.tema)})</span>` : ""}</li>`,
+      )
+      .join("");
+    secoes.push(
+      `<section id="apendice"><h2>${esc(r.apendice)}</h2><p class="meta">${esc(r.apendiceNota)}</p><ul>${itens}</ul></section>`,
+    );
+    for (const x of menores) texto.push(x.texto);
+  }
   texto.push(estado.pedido);
 
   const corpoTexto = texto.join("\n");

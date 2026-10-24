@@ -41,6 +41,8 @@ export interface RotulosDoc {
   respondeu: string;
   livre: string;
   aviso: string;
+  apendice: string;
+  apendiceNota: string;
 }
 
 /** Rótulos do documento em pt e en (outros idiomas caem em en). */
@@ -48,6 +50,8 @@ export function rotulosDoc(idioma: Idioma | string): RotulosDoc {
   return idioma === "pt"
     ? {
         secoes: SECOES_PT,
+        apendice: "Apêndice: observações do revisor",
+        apendiceNota: "Pontos não bloqueantes. Conteste o que discordar.",
         pedido: "Pedido original",
         nenhum: "Nada nesta seção.",
         porque: "Por que não perguntei",
@@ -63,6 +67,8 @@ export function rotulosDoc(idioma: Idioma | string): RotulosDoc {
       }
     : {
         secoes: SECOES_EN,
+        apendice: "Appendix: reviewer notes",
+        apendiceNota: "Non-blocking points. Challenge anything you disagree with.",
         pedido: "Original request",
         nenhum: "Nothing in this section.",
         porque: "Why I did not ask",

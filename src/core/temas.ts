@@ -25,6 +25,8 @@ export interface Tema {
   quando?: string;
   origem?: Origem;
   revisa?: string;
+  /** Instante de criação (só temas criados pelo modelo). */
+  criadoEm?: string;
   reabertura?: { nota: string; em: string };
   /** Fechamentos anteriores (preenchido na reabertura, F5). */
   historico: Fechamento[];

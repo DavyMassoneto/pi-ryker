@@ -20,6 +20,27 @@ export interface Pergunta {
   cancelada?: boolean;
 }
 
+export interface ResolucaoAchado {
+  tipo: "tema" | "sintese";
+  tema?: string;
+  como: string;
+}
+
+export interface Achado {
+  id: string;
+  bloqueante: boolean;
+  texto: string;
+  tema?: string;
+  exigeDecisaoMacro: boolean;
+  resolucao?: ResolucaoAchado;
+}
+
+/** Resultado da rodada única do revisor (decisão 12). */
+export interface Revisao {
+  em: string;
+  achados: Achado[];
+}
+
 export interface Anterior {
   modelo?: ModeloRef;
   ferramentas: string[];
@@ -36,6 +57,7 @@ export interface Estado {
   anterior: Anterior;
   modeloEtapa?: ModeloRef;
   pausado: boolean;
+  revisao?: Revisao;
   documento?: { caminho: string; geradoEm: string };
   aprovadoEm?: string;
 }
@@ -120,6 +142,7 @@ function aplicarUm(estado: Estado, it: ItemTema, agora: string): Estado {
       criadoPor: "modelo",
       status: "aberto",
       historico: [],
+      criadoEm: agora,
       ...(it.revisa ? { revisa: it.revisa } : {}),
     };
     return { ...estado, temas: [...estado.temas, novo] };

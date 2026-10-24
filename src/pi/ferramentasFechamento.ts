@@ -8,9 +8,18 @@ import {
   validarSinteses,
 } from "../core/documento.ts";
 import { aplicarTemas, aprovar, etapaAtiva, type ItemTema } from "../core/estado.ts";
+import {
+  aplicarResolucoes,
+  pendentes,
+  precisaRevisar,
+  type Resolucao,
+  resumoRevisao,
+  validarResolucoes,
+} from "../core/revisao.ts";
 import { textoStatus } from "../core/status.ts";
 import { temasAbertos } from "../core/temas.ts";
 import { gravarDocumento, lerEstado, salvarEstado } from "./persistencia.ts";
+import { executarRevisor } from "./revisor.ts";
 
 const agora = (): string => new Date().toISOString();
 const Idioma = Type.Optional(Type.Union([Type.Literal("pt"), Type.Literal("en")]));
@@ -62,6 +71,21 @@ const esquemaDocumento = Type.Object({
     }),
     { description: "Uma síntese por seção que tenha tema decidido." },
   ),
+  resolucoes: Type.Optional(
+    Type.Array(
+      Type.Object({
+        achado: Type.String({ description: "Id do achado bloqueante (ex.: a1)." }),
+        tipo: Type.Union([Type.Literal("tema"), Type.Literal("sintese")]),
+        tema: Type.Optional(
+          Type.String({
+            description: 'tipo "tema": id do tema criado depois da revisão e fechado por pergunta.',
+          }),
+        ),
+        como: Type.String({ description: "Como o achado foi resolvido." }),
+      }),
+      { description: "Resolução de cada achado bloqueante, ao chamar de novo após a revisão." },
+    ),
+  ),
   idioma: Idioma,
 });
 
@@ -109,7 +133,7 @@ export function registrarFerramentasFechamento(pi: ExtensionAPI): void {
     parameters: esquemaDocumento,
     defaultActive: false,
     executionMode: "sequential",
-    async execute(_id, params, _signal, _onUpdate, ctx) {
+    async execute(_id, params, signal, _onUpdate, ctx) {
       const leitura = lerEstado(ctx.cwd);
       if (leitura.tipo !== "ok" || !etapaAtiva(leitura.estado)) {
         throw new Error("Não há Discussão Global ativa; o usuário inicia com /ryker <pedido>.");
@@ -132,10 +156,35 @@ export function registrarFerramentasFechamento(pi: ExtensionAPI): void {
       if (!v.ok) throw new Error(v.erro);
       const doc = renderizar(estado, params.titulo, params.sinteses);
 
-      // F3: ponto de encaixe do revisor (1 rodada, antes de abrir o documento).
-      // Se houver achado bloqueante sem resolução, devolver os achados aqui sem gravar nem abrir.
+      // Revisor: 1 rodada só, antes de o usuário ver o documento (decisão 12).
+      const resolucoes = (params.resolucoes ?? []) as Resolucao[];
+      if (precisaRevisar(estado)) {
+        const achados = await executarRevisor(ctx, estado, doc.texto, signal);
+        estado = { ...estado, revisao: { em: agora(), achados } };
+        salvarEstado(pi, ctx.cwd, estado);
+        ctx.ui.notify(resumoRevisao(achados), "info");
+      } else if (resolucoes.length || pendentes(estado).length) {
+        const vr = validarResolucoes(estado, resolucoes);
+        if (!vr.ok) throw new Error(vr.erro);
+        estado = aplicarResolucoes(estado, resolucoes);
+        salvarEstado(pi, ctx.cwd, estado);
+      }
+      const bloqueantes = pendentes(estado);
+      if (bloqueantes.length) {
+        const linhas = bloqueantes.map(
+          (a) =>
+            `- ${a.id}${a.tema ? ` [tema ${a.tema}]` : ""}${a.exigeDecisaoMacro ? " [exige decisão macro]" : ""}: ${a.texto}`,
+        );
+        return {
+          ...texto(
+            `O revisor apontou ${bloqueantes.length} achado(s) bloqueante(s). Nada foi aberto para o usuário.\n${linhas.join("\n")}\n\nResolva cada um: se exige decisão macro, crie um tema (ryker_temas, ação criar, com revisa se altera uma decisão) e pergunte (ryker_perguntar); se é só redação, ajuste a síntese. Depois chame ryker_documento de novo com "resolucoes" (achado, tipo "tema" ou "sintese", tema, como). Não haverá segunda revisão.`,
+          ),
+          details: { bloqueantes: bloqueantes.map((a) => a.id) },
+        };
+      }
+      const docFinal = renderizar(estado, params.titulo, params.sinteses);
 
-      const caminho = gravarDocumento(ctx.cwd, doc.html);
+      const caminho = gravarDocumento(ctx.cwd, docFinal.html);
       estado = {
         ...estado,
         fase: "aprovacao",
@@ -157,7 +206,7 @@ export function registrarFerramentasFechamento(pi: ExtensionAPI): void {
         en ? "Vision document ready. Approve?" : "Documento de visão pronto. Aprovar?",
         [APROVAR, CORRIGIR],
       );
-      const aviso = doc.aviso ? ` ${doc.aviso}` : "";
+      const aviso = docFinal.aviso ? ` ${docFinal.aviso}` : "";
 
       if (escolha === APROVAR) {
         const ap = aprovar(estado, agora());
