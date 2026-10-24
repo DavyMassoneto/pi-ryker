@@ -90,7 +90,7 @@ const CSS = `:root{color-scheme:light dark;--fg:#1d1d1f;--bg:#fff;--mut:#6b6b70;
 body{font:16px/1.55 system-ui,sans-serif;color:var(--fg);background:var(--bg);max-width:46rem;margin:2rem auto;padding:0 1rem}
 h1{font-size:1.7rem}h2{font-size:1.2rem;border-bottom:1px solid var(--bd);padding-bottom:.2rem;margin-top:1.8rem}
 h3{font-size:1rem;margin:.9rem 0 .2rem;color:var(--ac)}p{margin:.3rem 0}.meta,.vazio{color:var(--mut);font-size:.9rem}
-li{margin:.25rem 0}`;
+li{margin:.25rem 0}.compacta{font-size:.85rem;color:var(--mut);padding-left:1.2rem}.registro{margin-top:.6rem}`;
 
 export interface Renderizado {
   html: string;
@@ -112,10 +112,19 @@ export function renderizar(
   for (let n = 1; n <= 8; n++) {
     const sint = sinteses.find((s) => s.secao === n);
     const temas = estado.temas.filter((t) => t.secao === n && t.status === "decidido");
-    const corpo = [
-      sint ? paragrafos(sint.texto) : "",
-      ...temas.map((t) => blocoTema(estado, t, false)),
-    ].join("");
+    // Com síntese: prosa + lista compacta (sem repetir subtítulos). Sem síntese: um bloco por tema.
+    const compacta = temas
+      .map(
+        (t) =>
+          `<li data-tema="${esc(t.id)}"><strong>${esc(t.titulo)}:</strong> ${esc(textoDecisao(estado, t).replace(/\s+/g, " ").trim())}</li>`,
+      )
+      .join("");
+    const corpo = sint
+      ? paragrafos(sint.texto) +
+        (temas.length
+          ? `<div class="registro"><p class="meta">${esc(r.decisoes)}</p><ul class="compacta">${compacta}</ul></div>`
+          : "")
+      : temas.map((t) => blocoTema(estado, t, false)).join("");
     if (sint) texto.push(sint.texto);
     for (const t of temas) texto.push(`${t.titulo}: ${textoDecisao(estado, t)}`);
     secoes.push(

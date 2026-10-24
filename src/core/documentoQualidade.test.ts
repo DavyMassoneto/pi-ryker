@@ -43,3 +43,32 @@ test("suposições só na seção 9, rotuladas como não decididas pelo usuário
   assert.match(s9, /Suposição[^<]*não decidida pelo usuário/);
   assert.doesNotMatch(secao(html, 3), /2 semanas/);
 });
+
+test("achado do revisor é escapado exatamente uma vez", () => {
+  const e = {
+    ...estado(),
+    revisao: {
+      em: T0,
+      achados: [{ id: "a1", bloqueante: false, texto: "o 'x' < y", exigeDecisaoMacro: false }],
+    },
+  };
+  const { html } = renderizar(e, "T", [{ secao: 2, texto: "síntese" }]);
+  assert.equal(html.split("o &#39;x&#39; &lt; y").length - 1, 1);
+  assert.doesNotMatch(html, /&amp;(#39|lt|gt|quot);/);
+});
+
+test("seção com síntese: prosa + lista compacta 'Decisões registradas', sem h3 repetido", () => {
+  const { html } = renderizar(estado(), "T", [{ secao: 2, texto: "síntese do resultado" }]);
+  const s2 = secao(html, 2);
+  assert.match(s2, /síntese do resultado/);
+  assert.match(s2, /Decisões registradas/);
+  assert.match(s2, /<li data-tema="resultado"><strong>[^<]+:<\/strong> CLI pronta<\/li>/);
+  assert.doesNotMatch(s2, /<h3>/);
+  assert.equal(html.split('data-tema="resultado"').length - 1, 1);
+});
+
+test("seção sem síntese: um bloco por tema, como antes", () => {
+  const s2 = secao(renderizar(estado(), "T", []).html, 2);
+  assert.match(s2, /<article data-tema="resultado"><h3>/);
+  assert.doesNotMatch(s2, /Decisões registradas/);
+});
