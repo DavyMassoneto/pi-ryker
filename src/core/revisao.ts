@@ -125,7 +125,13 @@ export function validarResolucoes(
       return falha(`Resolução para achado desconhecido: ${r.achado}.`);
     }
     if (!r.como?.trim()) return falha(`Resolução de ${r.achado}: descreva como (campo como).`);
+    const achadoAtual = achados.find((a) => a.id === r.achado);
     if (r.tipo === "tema") {
+      if (!achadoAtual?.exigeDecisaoMacro) {
+        return falha(
+          `Resolução de ${r.achado}: o achado tem exigeDecisaoMacro=false, então não vira pergunta ao usuário. Resolva por síntese ou reescrevendo a suposição (tipo "sintese" ou "suposicao").`,
+        );
+      }
       const t = r.tema ? achaTema(estado.temas, r.tema) : undefined;
       if (!t) return falha(`Resolução de ${r.achado}: tipo "tema" exige um tema existente.`);
       if (!t.criadoEm || t.criadoEm <= (estado.revisao?.em ?? "")) {
@@ -136,8 +142,19 @@ export function validarResolucoes(
           `Resolução de ${r.achado}: o tema ${t.id} ainda não foi fechado por pergunta ao usuário.`,
         );
       }
+    } else if (r.tipo === "suposicao") {
+      const t = r.tema ? achaTema(estado.temas, r.tema) : undefined;
+      if (!t) return falha(`Resolução de ${r.achado}: tipo "suposicao" exige um tema existente.`);
+      if (t.status !== "suposto") {
+        return falha(`Resolução de ${r.achado}: o tema ${t.id} não é uma suposição.`);
+      }
+      if (!t.revistoEm || t.revistoEm <= (estado.revisao?.em ?? "")) {
+        return falha(
+          `Resolução de ${r.achado}: a suposição ${t.id} não foi reescrita depois da revisão (ryker_temas, ação supor).`,
+        );
+      }
     } else if (r.tipo !== "sintese") {
-      return falha(`Resolução de ${r.achado}: tipo deve ser "tema" ou "sintese".`);
+      return falha(`Resolução de ${r.achado}: tipo deve ser "tema", "sintese" ou "suposicao".`);
     }
   }
   const resolvidos = new Set(resolucoes.map((r) => r.achado));

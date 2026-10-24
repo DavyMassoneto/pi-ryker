@@ -108,15 +108,17 @@ export function registrarResposta(
       },
     ],
     temas: estado.temas.map((t) =>
-      t.id === p.tema
-        ? {
-            ...semReabertura(t),
-            status: "decidido" as const,
-            texto: `${p.pergunta} → ${resposta}`,
-            quando: agora,
-            origem: { tipo: "usuario" as const, perguntaId: id },
-          }
-        : t,
+      t.id === tema.revisa && t.id !== p.tema
+        ? { ...t, substituidoPor: p.tema }
+        : t.id === p.tema
+          ? {
+              ...semReabertura(t),
+              status: "decidido" as const,
+              texto: `${p.pergunta} → ${resposta}`,
+              quando: agora,
+              origem: { tipo: "usuario" as const, perguntaId: id },
+            }
+          : t,
     ),
   };
 }

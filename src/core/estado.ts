@@ -21,7 +21,7 @@ export interface Pergunta {
 }
 
 export interface ResolucaoAchado {
-  tipo: "tema" | "sintese";
+  tipo: "tema" | "sintese" | "suposicao";
   tema?: string;
   como: string;
 }
@@ -120,6 +120,31 @@ export function slug(titulo: string): string {
   return base || "tema";
 }
 
+/** O agente pode rever a PRÓPRIA suposição (nunca o que o usuário decidiu); o anterior vai ao histórico. */
+function reescreverSuposicao(estado: Estado, tema: Tema, it: ItemTema, agora: string): Estado {
+  if (vazio(it.texto)) throw new Error(`"supor" exige texto (${tema.id}).`);
+  if (vazio(it.motivo))
+    throw new Error(`"supor" exige motivo: por que não perguntou (${tema.id}).`);
+  const novo: Tema = {
+    ...tema,
+    texto: (it.texto as string).trim(),
+    motivo: it.motivo,
+    quando: agora,
+    revistoEm: agora,
+    historico: [
+      ...tema.historico,
+      {
+        status: tema.status,
+        ...(tema.texto !== undefined ? { texto: tema.texto } : {}),
+        ...(tema.motivo !== undefined ? { motivo: tema.motivo } : {}),
+        ...(tema.quando !== undefined ? { quando: tema.quando } : {}),
+        ...(tema.origem ? { origem: tema.origem } : {}),
+      },
+    ],
+  };
+  return { ...estado, temas: estado.temas.map((t) => (t.id === tema.id ? novo : t)) };
+}
+
 function aplicarUm(estado: Estado, it: ItemTema, agora: string): Estado {
   if (it.acao === "criar") {
     if (vazio(it.titulo)) throw new Error('"criar" exige titulo.');
@@ -128,8 +153,8 @@ function aplicarUm(estado: Estado, it: ItemTema, agora: string): Estado {
     }
     if (it.revisa !== undefined) {
       const alvo = achaTema(estado.temas, it.revisa);
-      if (alvo?.status !== "decidido") {
-        throw new Error(`revisa: "${it.revisa}" precisa ser um tema decidido.`);
+      if (alvo?.status !== "decidido" && alvo?.status !== "suposto") {
+        throw new Error(`revisa: "${it.revisa}" precisa ser um tema decidido ou suposto.`);
       }
     }
     const base = slug(it.titulo as string);
@@ -150,6 +175,8 @@ function aplicarUm(estado: Estado, it: ItemTema, agora: string): Estado {
   if (vazio(it.tema)) throw new Error(`"${it.acao}" exige tema.`);
   const tema = achaTema(estado.temas, it.tema as string);
   if (!tema) throw new Error(`o tema "${it.tema}" não existe.`);
+  if (it.acao === "supor" && tema.status === "suposto")
+    return reescreverSuposicao(estado, tema, it, agora);
   if (tema.status !== "aberto") throw new Error(`tema fechado (${tema.status}): ${tema.id}.`);
   if (tema.reabertura) {
     throw new Error(`o tema ${tema.id} foi reaberto pelo usuário e só fecha por ryker_perguntar.`);

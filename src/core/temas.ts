@@ -25,6 +25,10 @@ export interface Tema {
   quando?: string;
   origem?: Origem;
   revisa?: string;
+  /** Tema que substituiu este quando o usuário o decidiu (sai das seções 1-10). */
+  substituidoPor?: string;
+  /** Última vez que o agente reescreveu esta suposição. */
+  revistoEm?: string;
   /** Instante de criação (só temas criados pelo modelo). */
   criadoEm?: string;
   reabertura?: { nota: string; em: string };

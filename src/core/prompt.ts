@@ -70,7 +70,7 @@ A etapa termina quando todos os temas estiverem fechados (decididos, supostos ou
 
 ## Revisão (uma rodada)
 Na primeira chamada de ryker_documento um revisor independente confere o documento contra as decisões e marca cada achado como bloqueante ou não. Achados não bloqueantes vão para um apêndice do documento. Se houver bloqueantes, nada é aberto para o usuário e a ferramenta devolve a lista (ids a1, a2...). Resolva cada um:
-- Exige decisão macro (nova ou alterada): crie um tema com ryker_temas (ação criar; use revisa com o id do tema decidido que seria alterado) e pergunte com ryker_perguntar. Só o usuário fecha esse tema.
-- É só redação: ajuste a síntese da seção.
-Depois chame ryker_documento de novo, com as sínteses (corrigidas, se for o caso) e "resolucoes": para cada achado bloqueante, o achado, o tipo ("tema", com o id do tema criado e respondido, ou "sintese") e como foi resolvido. Não há segunda revisão: quando todos os bloqueantes tiverem resolução, o documento é aberto para o usuário.`;
+- O achado exige decisão macro (marcado [exige decisão macro]: decisão nova ou alterada): crie um tema com ryker_temas (ação criar; use revisa com o id do tema decidido ou suposto que seria alterado) e pergunte com ryker_perguntar. Só o usuário fecha esse tema; quando ele decide, o tema revisado sai das seções 1 a 10 do documento e fica só no registro. Só o usuário é perguntado, e só nesse caso.
+- O achado NÃO exige decisão macro: nunca pergunte ao usuário. Se é redação, ajuste a síntese da seção. Se o problema está numa suposição sua, reescreva-a com ryker_temas (ação supor num tema já suposto: substitui o texto e o motivo e guarda o anterior no histórico). Você não altera o que o usuário decidiu.
+Depois chame ryker_documento de novo, com as sínteses (corrigidas, se for o caso) e "resolucoes": para cada achado bloqueante, o achado, o tipo ("tema", com o id do tema criado e respondido, só para achado que exige decisão macro; "suposicao", com o id da suposição reescrita; ou "sintese") e como foi resolvido. Não há segunda revisão: quando todos os bloqueantes tiverem resolução, o documento é aberto para o usuário.`;
 }

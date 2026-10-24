@@ -22,7 +22,7 @@ Se já existe uma discussão aprovada, `/ryker <pedido>` pergunta se pode arquiv
 
 - Só se pergunta por `ryker_perguntar`: até 4 perguntas por chamada, mostradas uma por vez, com 2 a 5 opções, a recomendada primeiro e "Outra resposta…".
 - Tema fechado não é perguntado de novo; tema reaberto por você só fecha por pergunta.
-- O agente fecha temas sem perguntar só com fonte citada, suposição com motivo ou adiamento com data de decisão.
+- O agente fecha temas sem perguntar só com fonte citada, suposição com motivo ou adiamento com o momento de decidir.
 - O documento é gerado pelo código a partir do estado: as 11 seções, todos os temas, suposições e adiados, e o registro das perguntas. Suposições ficam na seção 9, para aprovação em bloco.
 - Um revisor confere o documento uma única vez, antes de você vê-lo. Achado bloqueante tem de ser resolvido; os demais vão num apêndice.
 - Ao aprovar, ferramentas e modelo anteriores são restaurados.

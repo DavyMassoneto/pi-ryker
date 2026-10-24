@@ -78,7 +78,11 @@ const esquemaDocumento = Type.Object({
     Type.Array(
       Type.Object({
         achado: Type.String({ description: "Id do achado bloqueante (ex.: a1)." }),
-        tipo: Type.Union([Type.Literal("tema"), Type.Literal("sintese")]),
+        tipo: Type.Union([
+          Type.Literal("tema"),
+          Type.Literal("sintese"),
+          Type.Literal("suposicao"),
+        ]),
         tema: Type.Optional(
           Type.String({
             description: 'tipo "tema": id do tema criado depois da revisão e fechado por pergunta.',
@@ -180,7 +184,7 @@ export function registrarFerramentasFechamento(pi: ExtensionAPI): void {
         );
         return {
           ...texto(
-            `O revisor apontou ${bloqueantes.length} achado(s) bloqueante(s). Nada foi aberto para o usuário.\n${linhas.join("\n")}\n\nResolva cada um: se exige decisão macro, crie um tema (ryker_temas, ação criar, com revisa se altera uma decisão) e pergunte (ryker_perguntar); se é só redação, ajuste a síntese. Depois chame ryker_documento de novo com "resolucoes" (achado, tipo "tema" ou "sintese", tema, como). Não haverá segunda revisão.`,
+            `O revisor apontou ${bloqueantes.length} achado(s) bloqueante(s). Nada foi aberto para o usuário.\n${linhas.join("\n")}\n\nResolva cada um. Só os achados marcados [exige decisão macro] viram pergunta: crie um tema (ryker_temas, ação criar, com revisa se altera algo já fechado) e pergunte (ryker_perguntar), tipo "tema". Os demais NÃO vão ao usuário: se é redação, ajuste a síntese (tipo "sintese"); se o problema está numa suposição sua, reescreva-a com ryker_temas (ação supor no tema suposto) e use tipo "suposicao". Depois chame ryker_documento de novo com "resolucoes" (achado, tipo, tema, como). Não haverá segunda revisão.`,
           ),
           details: { bloqueantes: bloqueantes.map((a) => a.id) },
         };

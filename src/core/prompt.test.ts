@@ -53,3 +53,10 @@ test("secaoPrompt: sínteses 1-8 cobrem só o decidido; suposições na 9 e adia
   assert.match(s, /seção 9/);
   assert.match(s, /seção 10/);
 });
+
+test("secaoPrompt: só achado que exige decisão macro vira pergunta; suposição pode ser reescrita", () => {
+  const s = secaoPrompt(novo());
+  assert.match(s, /NÃO exige decisão macro: nunca pergunte/);
+  assert.match(s, /suposicao/);
+  assert.match(s, /ação supor num tema já suposto/);
+});
