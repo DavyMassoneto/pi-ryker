@@ -38,6 +38,16 @@ export function gravarEstado(cwd: string, estado: Estado): void {
   renameSync(tmp, destino);
 }
 
+/** Grava `.ryker/visao.html` (tmp + rename) e devolve o caminho absoluto. */
+export function gravarDocumento(cwd: string, html: string): string {
+  mkdirSync(pastaRyker(cwd), { recursive: true });
+  const destino = join(pastaRyker(cwd), "visao.html");
+  const tmp = `${destino}.tmp`;
+  writeFileSync(tmp, html, "utf8");
+  renameSync(tmp, destino);
+  return destino;
+}
+
 /** O arquivo é a fonte de verdade; a sessão guarda um snapshot a cada mutação. */
 export function salvarEstado(pi: ExtensionAPI, cwd: string, estado: Estado): void {
   gravarEstado(cwd, estado);
