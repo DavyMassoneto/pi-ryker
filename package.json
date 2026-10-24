@@ -1,16 +1,28 @@
 {
   "name": "pi-ryker",
-  "version": "0.0.1",
-  "description": "Ryker: extensão do pi que trava o fluxo de 6 etapas no harness. Em construção.",
+  "version": "0.1.0",
+  "description": "Ryker: etapa de Discussão Global para o pi",
   "type": "module",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/DavyMassoneto/pi-ryker.git"
   },
-  "engines": { "node": ">=22.19" },
-  "pi": { "extensions": ["./src/index.ts"] },
-  "files": ["src", "!src/**/*.test.ts", "README.md"],
+  "engines": {
+    "node": ">=22.19"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "files": [
+    "src",
+    "!src/**/*.test.ts",
+    "README.md"
+  ],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "typebox": "*"

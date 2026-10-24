@@ -46,3 +46,10 @@ test("secaoPrompt: snapshot dos temas com status e o pedido", () => {
   assert.match(s, /apetite.*aberto/);
   assert.match(s, /problema-job.*aberto/);
 });
+
+test("secaoPrompt: sínteses 1-8 cobrem só o decidido; suposições na 9 e adiados na 10", () => {
+  const s = secaoPrompt(novo());
+  assert.match(s, /só o que foi decidido/);
+  assert.match(s, /seção 9/);
+  assert.match(s, /seção 10/);
+});
