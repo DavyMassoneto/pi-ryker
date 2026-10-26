@@ -61,6 +61,12 @@ export function estadoAtivo(cwd: string): Estado | undefined {
   return l.tipo === "ok" && l.estado.fase !== "aprovada" ? l.estado : undefined;
 }
 
+/** Estado da discussão já aprovada (fase "aprovada"), se houver e for legível. */
+export function estadoAprovado(cwd: string): Estado | undefined {
+  const l = lerEstado(cwd);
+  return l.tipo === "ok" && l.estado.fase === "aprovada" ? l.estado : undefined;
+}
+
 /** Move discussao.json (e visao.html) da discussão aprovada para `.ryker/arquivo/<data>-<slug>/`. */
 export function arquivarAprovada(cwd: string, estado: Estado): string {
   const rel = caminhoArquivamento(estado);

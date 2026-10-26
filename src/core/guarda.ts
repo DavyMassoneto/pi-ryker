@@ -82,9 +82,28 @@ const TEXTO_A =
 const TEXTO_B =
   "CORREÇÃO DO SISTEMA: a Discussão Global ainda tem temas abertos e você parou sem perguntar. Continue: feche o que as fontes já respondem com `ryker_temas` (fonte, supor ou adiar) e faça a próxima pergunta com `ryker_perguntar`.";
 
+export const TEXTO_POS_APROVACAO =
+  "CORREÇÃO DO SISTEMA: depois da aprovação da visão o usuário não é perguntado. Decida você e registre como suposição; continue o trabalho.";
+
 export function decidirContinuacao(e: EntradaGuarda): DecisaoGuarda {
   const nada: DecisaoGuarda = { contadores: e.contadores };
   const { estado } = e;
+  if (estado?.fase === "aprovada") {
+    if (
+      e.outcome === "completed" &&
+      e.contadores.livre < MAX_CORRECOES_LIVRE &&
+      detectaPerguntaLivre(
+        e.texto,
+        estado.perguntas.map((p) => p.pergunta),
+      )
+    ) {
+      return {
+        correcao: { tipo: "A", texto: TEXTO_POS_APROVACAO },
+        contadores: { ...e.contadores, livre: e.contadores.livre + 1 },
+      };
+    }
+    return nada;
+  }
   if (!etapaAtiva(estado) || estado.pausado) return nada;
   if (e.outcome !== "completed") return nada;
   if (estado.fase === "aprovacao") return nada;

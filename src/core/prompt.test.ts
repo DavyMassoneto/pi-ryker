@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { criarEstado } from "./estado.ts";
 import { registrarResposta } from "./perguntas.ts";
-import { secaoPrompt } from "./prompt.ts";
+import { secaoPrompt, secaoPromptPosAprovacao } from "./prompt.ts";
 
 const AGORA = "2026-10-23T10:00:00.000Z";
+const novoSemIdioma = () =>
+  criarEstado({ pedido: "Quero uma CLI", agora: AGORA, anterior: { ferramentas: [] } });
 const novo = () =>
   criarEstado({
     pedido: "Quero uma CLI",
@@ -59,4 +61,29 @@ test("secaoPrompt: só achado que exige decisão macro vira pergunta; suposiçã
   assert.match(s, /NÃO exige decisão macro: nunca pergunte/);
   assert.match(s, /suposicao/);
   assert.match(s, /ação supor num tema já suposto/);
+});
+
+test("secaoPromptPosAprovacao: usuário não é perguntado e segue a visão", () => {
+  const s = secaoPromptPosAprovacao();
+  assert.match(s, /não é perguntado/);
+  assert.match(s, /visão descreve/);
+});
+
+test("secaoPrompt: sem idioma exige 'idioma' na primeira chamada; com idioma manda mantê-lo", () => {
+  const sem = secaoPrompt(novoSemIdioma());
+  assert.match(sem, /ainda não está registrado/);
+  assert.match(sem, /PRIMEIRA chamada/);
+  const com = secaoPrompt({ ...novoSemIdioma(), idioma: "pt-BR" });
+  assert.match(com, /"pt-BR"/);
+  assert.match(com, /Continue usando esse idioma/);
+});
+
+test("secaoPrompt: fila por impacto × incerteza", () => {
+  const s = secaoPrompt(novo());
+  assert.match(s, /impacto × incerteza/);
+  assert.match(s, /do maior para o menor/);
+  assert.match(s, /até 4 por chamada de ryker_perguntar/);
+  assert.match(s, /reavalie a fila/);
+  assert.match(s, /ação supor/);
+  assert.match(s, /ação adiar/);
 });

@@ -51,7 +51,7 @@ export function validarPerguntas(estado: Estado, lote: readonly PerguntaEntrada[
 }
 
 /** Recomendada primeiro, com sufixo; "Outra resposta…" no fim. */
-export function opcoesDoSelect(p: PerguntaEntrada, idioma: Idioma = "pt"): string[] {
+export function opcoesDoSelect(p: PerguntaEntrada, idioma?: Idioma): string[] {
   const r = rotulos(idioma);
   const rec = `${p.opcoes[p.recomendada]} (${r.recomendada})`;
   const demais = p.opcoes.filter((_, i) => i !== p.recomendada);
@@ -63,7 +63,7 @@ export type Escolha = { tipo: "opcao"; texto: string } | { tipo: "livre" } | { t
 export function interpretarEscolha(
   p: PerguntaEntrada,
   escolha: string | undefined,
-  idioma: Idioma = "pt",
+  idioma?: Idioma,
 ): Escolha {
   if (escolha === undefined) return { tipo: "cancelado" };
   const r = rotulos(idioma);

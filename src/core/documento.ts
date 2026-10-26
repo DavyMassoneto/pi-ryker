@@ -236,7 +236,7 @@ function htmlVisao(estado: Estado, v: Visao): string {
       `<section id="apendice"><h2>${esc(r.apendice)}</h2><p class="meta">${esc(r.apendiceNota)}</p><ul>${itens}</ul></section>`,
     );
   }
-  return `<!doctype html><html lang="${esc(estado.idioma)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(v.titulo)}</title><style>${CSS}</style></head><body><h1>${esc(v.titulo)}</h1>${partes.join("")}</body></html>`;
+  return `<!doctype html><html lang="${esc(estado.idioma ?? "pt")}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(v.titulo)}</title><style>${CSS}</style></head><body><h1>${esc(v.titulo)}</h1>${partes.join("")}</body></html>`;
 }
 
 /** Mesmo conteúdo, mesmos títulos e rótulos do HTML, em texto puro (é o que o revisor lê). */

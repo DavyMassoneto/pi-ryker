@@ -130,7 +130,6 @@ export function registrarComando(pi: ExtensionAPI): void {
       }
       const estado: Estado = criarEstado({
         pedido,
-        idioma: "pt",
         agora: new Date().toISOString(),
         anterior,
         ...(m.modelo ? { modeloEtapa: m.modelo } : {}),

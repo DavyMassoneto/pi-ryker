@@ -74,10 +74,6 @@ test("decidir: etapa inativa, aprovação, aborted, error, pausado -> nada", () 
   const q = "Qual é o público?";
   assert.equal(decidirContinuacao(entrada({ texto: q, estado: undefined })).correcao, undefined);
   assert.equal(
-    decidirContinuacao(entrada({ texto: q, estado: { ...base(), fase: "aprovada" } })).correcao,
-    undefined,
-  );
-  assert.equal(
     decidirContinuacao(entrada({ texto: q, estado: { ...base(), fase: "aprovacao" } })).correcao,
     undefined,
   );
@@ -137,4 +133,28 @@ test("decidir: contadores zeram a cada execução (CONTADORES_ZERO)", () => {
   const r = decidirContinuacao(entrada());
   assert.notDeepEqual(r.contadores, CONTADORES_ZERO);
   assert.equal(decidirContinuacao(entrada({ contadores: CONTADORES_ZERO })).correcao?.tipo, "B");
+});
+
+test("pós-aprovação: pergunta em texto livre gera correção própria", () => {
+  const aprovada: Estado = { ...fechado(), fase: "aprovada" };
+  const d = decidirContinuacao(
+    entrada({ estado: aprovada, texto: "Plano pronto.\n\nQual modelo devo usar?" }),
+  );
+  assert.equal(d.correcao?.tipo, "A");
+  assert.match(d.correcao?.texto ?? "", /depois da aprovação/);
+  assert.doesNotMatch(d.correcao?.texto ?? "", /ryker_perguntar/);
+  assert.equal(d.contadores.livre, 1);
+});
+
+test("pós-aprovação: sem pergunta ou no limite não corrige", () => {
+  const aprovada: Estado = { ...fechado(), fase: "aprovada" };
+  assert.equal(decidirContinuacao(entrada({ estado: aprovada })).correcao, undefined);
+  const noLimite = decidirContinuacao(
+    entrada({
+      estado: aprovada,
+      texto: "Qual modelo devo usar?",
+      contadores: { livre: 2, progresso: 0 },
+    }),
+  );
+  assert.equal(noLimite.correcao, undefined);
 });

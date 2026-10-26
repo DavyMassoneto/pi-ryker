@@ -1,4 +1,5 @@
 import type { Idioma } from "./estado.ts";
+import { ehPt } from "./i18n.ts";
 
 const SECOES_PT = [
   "Problema e para quem",
@@ -51,8 +52,8 @@ export interface RotulosDoc {
 }
 
 /** Rótulos do documento em pt e en (outros idiomas caem em en). */
-export function rotulosDoc(idioma: Idioma | string): RotulosDoc {
-  return idioma === "pt"
+export function rotulosDoc(idioma?: Idioma): RotulosDoc {
+  return ehPt(idioma)
     ? {
         secoes: SECOES_PT,
         decisoes: "Decisões registradas",

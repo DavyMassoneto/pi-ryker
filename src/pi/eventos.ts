@@ -6,10 +6,11 @@ import {
   semPerguntaNativa,
 } from "../core/ferramentasAtivas.ts";
 import { CONTADORES_ZERO, decidirContinuacao, TIPO_CORRECAO } from "../core/guarda.ts";
-import { secaoPrompt } from "../core/prompt.ts";
+import { REGRA_POS_APROVACAO, secaoPrompt, secaoPromptPosAprovacao } from "../core/prompt.ts";
 import { decidirRestauracao } from "../core/restauracao.ts";
 import { textoStatus } from "../core/status.ts";
 import {
+  estadoAprovado,
   estadoAtivo,
   gravarEstado,
   lerEstado,
@@ -45,7 +46,7 @@ export function registrarEventos(pi: ExtensionAPI): void {
   pi.on("agent_before_settle", async (event, ctx) => {
     const ultima = [...event.context.contextMessages].reverse().find((m) => m.role === "assistant");
     const decisao = decidirContinuacao({
-      estado: estadoAtivo(ctx.cwd),
+      estado: estadoAtivo(ctx.cwd) ?? estadoAprovado(ctx.cwd),
       texto: textoDe(ultima),
       perguntouNaUltima: chamouPerguntar(ultima),
       outcome: event.outcome,
@@ -68,7 +69,14 @@ export function registrarEventos(pi: ExtensionAPI): void {
 
   pi.on("before_agent_start", async (event, ctx) => {
     let estado = estadoAtivo(ctx.cwd);
-    if (!estado) return;
+    if (!estado) {
+      if (!estadoAprovado(ctx.cwd)) return;
+      event.systemPromptOptions.sections[SECAO_PROMPT] = secaoPromptPosAprovacao();
+      const ativas = pi.getActiveTools();
+      const limpas = semPerguntaNativa(ativas);
+      if (limpas.length !== ativas.length) pi.setActiveTools(limpas);
+      return;
+    }
     // Um novo turno do usuário retoma uma discussão pausada.
     if (event.messageType === "user" && estado.pausado) {
       estado = { ...estado, pausado: false };
@@ -84,8 +92,10 @@ export function registrarEventos(pi: ExtensionAPI): void {
 
   pi.on("tool_call", async (event, ctx) => {
     if (event.toolName !== FERRAMENTA_BLOQUEADA) return;
-    if (!estadoAtivo(ctx.cwd)) return;
-    return { block: true, reason: "Durante a Discussão Global use ryker_perguntar." };
+    if (estadoAtivo(ctx.cwd)) {
+      return { block: true, reason: "Durante a Discussão Global use ryker_perguntar." };
+    }
+    if (estadoAprovado(ctx.cwd)) return { block: true, reason: REGRA_POS_APROVACAO };
   });
 
   pi.on("session_start", async (_event, ctx) => {

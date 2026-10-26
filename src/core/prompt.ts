@@ -22,6 +22,25 @@ export function snapshotTemas(estado: Estado): string {
   return estado.temas.map(linhaTema).join("\n");
 }
 
+/** Regra pós-aprovação: o usuário não é mais perguntado; vale para a mensagem de bloqueio e o prompt. */
+export const REGRA_POS_APROVACAO =
+  "Depois da aprovação da visão o usuário não é perguntado sobre nada: modelo, esforço de raciocínio, agentes e abordagem são seus; decida e registre como suposição. Dúvida macro genuína (o quê/porquê/escopo): diga em texto e pare.";
+
+/** Seção do prompt depois da aprovação da visão (fase "aprovada"). */
+export function secaoPromptPosAprovacao(): string {
+  return `# Ryker — após a aprovação da visão
+
+A visão foi aprovada em .ryker/visao.html. ${REGRA_POS_APROVACAO}
+Planeje e execute o que a visão descreve, sem o usuário. Não use ${FERRAMENTA_BLOQUEADA}: ela segue bloqueada.`;
+}
+
+function linhaIdioma(estado: Estado): string {
+  if (estado.idioma) {
+    return `Responda no idioma do usuário (idioma registrado: "${estado.idioma}"). Continue usando esse idioma e informe-o em "idioma" nas chamadas das ferramentas Ryker; se o usuário passar a escrever em outro, envie a nova tag.`;
+  }
+  return 'Responda no idioma do usuário. O idioma dele ainda não está registrado: na PRIMEIRA chamada de qualquer ferramenta Ryker (ryker_perguntar, ryker_temas ou ryker_documento) passe "idioma" com a tag do idioma em que o usuário escreve (ex.: "pt-BR", "en", "es"). Sem isso a chamada é recusada.';
+}
+
 /**
  * Seção do system prompt da etapa Discussão Global. É o coração do comportamento:
  * o agente só faz perguntas MACRO, pela ferramenta, e decide o resto sozinho.
@@ -29,7 +48,7 @@ export function snapshotTemas(estado: Estado): string {
 export function secaoPrompt(estado: Estado): string {
   return `# Ryker — Discussão Global
 
-Você está na etapa Discussão Global do método Ryker. Responda no idioma do usuário (o pedido está em "${estado.idioma}"; mantenha o idioma em que ele escreve).
+Você está na etapa Discussão Global do método Ryker. ${linhaIdioma(estado)}
 
 ## Seu papel
 Levantar com o usuário apenas as decisões MACRO: o quê e o porquê. Isto é: o problema, para quem, o resultado esperado, o escopo (o que entra e o que fica fora), as restrições duras e as escolhas caras de reverter. Nunca discuta o COMO (arquitetura, bibliotecas, estrutura interna, nomes, detalhes de implementação). Nesta etapa você não escreve nem altera arquivos: só lê e pergunta.
@@ -43,6 +62,13 @@ Nesta ordem: 1) o pedido do usuário; 2) os docs do projeto (README, docs/, arqu
 
 ## Teste de macro
 Só pergunte se a resposta muda o escopo, o usuário, o objetivo, uma restrição ou uma escolha cara de reverter, e não existe padrão razoável para assumir. Se qualquer parte do teste falhar, decida você mesmo.
+
+## Fila de perguntas: impacto × incerteza
+Para cada tema aberto, forme a pergunta candidata e julgue: o impacto (quanto a resposta muda escopo, usuário, objetivo ou restrição), a incerteza (quão pouco o que você leu já indica a resposta) e se existe um padrão razoável. Depois do teste de macro:
+- Tema com padrão razoável: feche com ryker_temas, ação supor.
+- Tema que pode esperar (decidir agora fecharia uma alternativa sem informação): feche com ryker_temas, ação adiar.
+- Os demais entram numa fila ordenada por impacto × incerteza, do maior para o menor.
+Pergunte a partir do topo da fila, até 4 por chamada de ryker_perguntar. Depois de cada resposta, reavalie a fila: uma resposta pode mudar o impacto ou a incerteza dos outros temas, torná-los respondidos, supostos ou adiáveis, ou criar temas novos.
 
 ## Como perguntar
 - Pergunte SOMENTE pela ferramenta ryker_perguntar, nunca em texto. Uma pergunta escrita na resposta é um defeito: ela não é gravada e não fecha o tema.

@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { aprovar, type Estado } from "../core/estado.ts";
+import { ehPt } from "../core/i18n.ts";
 import {
   type ItemReabertura,
   interpretarSelecao,
@@ -25,7 +26,7 @@ export async function lacoCorrecao(
   ctx: ExtensionContext,
   estado: Estado,
 ): Promise<ItemReabertura[] | undefined> {
-  const en = estado.idioma === "en";
+  const en = !ehPt(estado.idioma);
   let selecionados: string[] = [];
   for (;;) {
     const escolha = await ctx.ui.select(
@@ -84,9 +85,9 @@ export async function aprovarEtapa(
   }
   ctx.ui.setStatus("ryker", undefined);
   ctx.ui.notify(
-    estado.idioma === "en"
-      ? "Vision approved. Model and tools restored."
-      : "Visão aprovada. Modelo e ferramentas restaurados.",
+    !ehPt(estado.idioma)
+      ? "Vision approved. Model and tools restored; the agent proceeds to planning."
+      : "Visão aprovada. Modelo e ferramentas restaurados; o agente segue para o planejamento.",
     "info",
   );
   return ap.estado;
@@ -98,7 +99,7 @@ export async function dialogoAprovacao(
   ctx: ExtensionContext,
   estado: Estado,
 ): Promise<ResultadoAprovacao> {
-  const en = estado.idioma === "en";
+  const en = !ehPt(estado.idioma);
   const APROVAR = en ? "Approve" : "Aprovar";
   const CORRIGIR = en ? "Fix points" : "Corrigir pontos";
   for (;;) {

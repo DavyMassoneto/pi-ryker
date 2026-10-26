@@ -1,7 +1,8 @@
 import { achaTema, criarTemasBase, type Tema } from "./temas.ts";
 
 export type Fase = "descoberta" | "documento" | "aprovacao" | "aprovada";
-export type Idioma = "pt" | "en";
+/** Tag de idioma livre (ex.: "pt-BR", "en", "es"): é o idioma do usuário, nunca fixo. */
+export type Idioma = string;
 
 export interface ModeloRef {
   provider: string;
@@ -50,7 +51,8 @@ export interface Estado {
   versao: 1;
   fase: Fase;
   pedido: string;
-  idioma: Idioma;
+  /** Ausente até o modelo informar o idioma do usuário (primeira chamada de ferramenta). */
+  idioma?: Idioma;
   criadoEm: string;
   temas: Tema[];
   perguntas: Pergunta[];
@@ -66,7 +68,7 @@ export const VERSAO_ESTADO = 1;
 
 export interface ParamsCriar {
   pedido: string;
-  idioma: Idioma;
+  idioma?: Idioma;
   /** Instante ISO; entra por parâmetro para o core não depender do relógio. */
   agora: string;
   anterior: Anterior;
@@ -78,7 +80,7 @@ export function criarEstado(p: ParamsCriar): Estado {
     versao: VERSAO_ESTADO,
     fase: "descoberta",
     pedido: p.pedido,
-    idioma: p.idioma,
+    ...(p.idioma ? { idioma: p.idioma } : {}),
     criadoEm: p.agora,
     temas: criarTemasBase(),
     perguntas: [],

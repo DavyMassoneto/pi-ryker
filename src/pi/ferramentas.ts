@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { etapaAtiva } from "../core/estado.ts";
+import { resolverIdioma } from "../core/i18n.ts";
 import { type PerguntaEntrada, validarPerguntas } from "../core/perguntas.ts";
 import { textoStatus } from "../core/status.ts";
 import { temasAbertos } from "../core/temas.ts";
@@ -26,8 +27,9 @@ const esquemaPerguntar = Type.Object({
     { minItems: 1, maxItems: 4, description: "Até 4 perguntas, de temas diferentes." },
   ),
   idioma: Type.Optional(
-    Type.Union([Type.Literal("pt"), Type.Literal("en")], {
-      description: "Idioma do usuário, para os rótulos da interface.",
+    Type.String({
+      description:
+        'Tag do idioma em que o usuário escreve (ex.: "pt-BR", "en", "es"). Obrigatório na primeira chamada.',
     }),
   ),
 });
@@ -48,10 +50,9 @@ export function registrarFerramentas(pi: ExtensionAPI): void {
         throw new Error("Não há Discussão Global ativa; o usuário inicia com /ryker <pedido>.");
       }
       if (!ctx.hasUI) throw new Error("ryker_perguntar precisa de interface interativa.");
-      let estado = leitura.estado;
-      if (params.idioma && params.idioma !== estado.idioma) {
-        estado = { ...estado, idioma: params.idioma };
-      }
+      const ri = resolverIdioma(leitura.estado, params.idioma);
+      if (!ri.ok) throw new Error(ri.erro);
+      const estado = ri.estado;
       const lote: PerguntaEntrada[] = params.perguntas;
       const v = validarPerguntas(estado, lote);
       if (!v.ok) throw new Error(v.erro);

@@ -27,7 +27,7 @@ Se já existe uma discussão aprovada, `/ryker <pedido>` pergunta se pode arquiv
 - O agente fecha temas sem perguntar só com fonte citada, suposição com motivo ou adiamento com o momento de decidir.
 - O documento é gerado pelo código a partir do estado: as 11 seções, todos os temas, suposições e adiados, e o registro das perguntas. Suposições ficam na seção 9, para aprovação em bloco.
 - Um revisor confere o documento uma única vez, antes de você vê-lo. Achado bloqueante tem de ser resolvido; os demais vão num apêndice.
-- Ao aprovar, ferramentas e modelo anteriores são restaurados.
+- Ao aprovar, ferramentas e modelo anteriores são restaurados e o agente segue, no mesmo turno, planejar e executar o que a visão descreve, decidindo sozinho as escolhas de implementação. O Ryker novo ainda não tem etapas depois da Discussão Global.
 - Cada resposta é gravada na hora; Esc pausa a discussão.
 
 ## Onde fica o estado
@@ -41,5 +41,5 @@ Se já existe uma discussão aprovada, `/ryker <pedido>` pergunta se pode arquiv
 ## Limites conhecidos
 
 - Pergunta escrita em texto livre não é bloqueada: aparece no stream e é corrigida depois, com uma continuação forçada (no máximo 2 por execução).
-- `ask_user_question` (rpiv) fica bloqueado durante a etapa; o agente é orientado a usar `ryker_perguntar`.
+- `ask_user_question` (rpiv) fica bloqueado durante a etapa e continua bloqueado depois da aprovação (enquanto a fase for "aprovada"); durante a etapa o agente usa `ryker_perguntar`, depois dela decide sozinho e registra como suposição.
 - Rótulos da interface existem em português e inglês.

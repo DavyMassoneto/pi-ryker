@@ -9,6 +9,7 @@ import {
   validarSinteses,
 } from "../core/documento.ts";
 import { aplicarTemas, etapaAtiva, type ItemTema } from "../core/estado.ts";
+import { ehPt, resolverIdioma } from "../core/i18n.ts";
 import { textoReabertos } from "../core/reabertura.ts";
 import {
   aplicarResolucoes,
@@ -25,7 +26,12 @@ import { gravarDocumento, lerEstado, salvarEstado } from "./persistencia.ts";
 import { executarRevisor } from "./revisor.ts";
 
 const agora = (): string => new Date().toISOString();
-const Idioma = Type.Optional(Type.Union([Type.Literal("pt"), Type.Literal("en")]));
+const Idioma = Type.Optional(
+  Type.String({
+    description:
+      'Tag do idioma em que o usuário escreve (ex.: "pt-BR", "en", "es"). Obrigatório na primeira chamada.',
+  }),
+);
 
 const esquemaTemas = Type.Object({
   itens: Type.Array(
@@ -113,10 +119,9 @@ export function registrarFerramentasFechamento(pi: ExtensionAPI): void {
       if (leitura.tipo !== "ok" || !etapaAtiva(leitura.estado)) {
         throw new Error("Não há Discussão Global ativa; o usuário inicia com /ryker <pedido>.");
       }
-      let estado = leitura.estado;
-      if (params.idioma && params.idioma !== estado.idioma) {
-        estado = { ...estado, idioma: params.idioma };
-      }
+      const ri = resolverIdioma(leitura.estado, params.idioma);
+      if (!ri.ok) throw new Error(ri.erro);
+      const estado = ri.estado;
       const r = aplicarTemas(estado, params.itens as ItemTema[], agora());
       if (!r.ok) throw new Error(r.erro);
       salvarEstado(pi, ctx.cwd, r.estado);
@@ -146,12 +151,11 @@ export function registrarFerramentasFechamento(pi: ExtensionAPI): void {
         throw new Error("Não há Discussão Global ativa; o usuário inicia com /ryker <pedido>.");
       }
       if (!ctx.hasUI) throw new Error("ryker_documento precisa de interface interativa.");
-      let estado = leitura.estado;
+      const ri = resolverIdioma(leitura.estado, params.idioma);
+      if (!ri.ok) throw new Error(ri.erro);
+      let estado = ri.estado;
       if (estado.fase !== "descoberta" && estado.fase !== "aprovacao") {
         throw new Error(`Fase "${estado.fase}": não é possível gerar o documento agora.`);
-      }
-      if (params.idioma && params.idioma !== estado.idioma) {
-        estado = { ...estado, idioma: params.idioma };
       }
       const pode = podeGerarDocumento(estado);
       if (!pode.ok) {
@@ -218,10 +222,11 @@ export function registrarFerramentasFechamento(pi: ExtensionAPI): void {
       if (r.resultado === "aprovada") {
         return {
           ...texto(
-            `Documento aprovado pelo usuário (${join(".ryker", "visao.html")}). A Discussão Global terminou; não escreva mais nada.${aviso}`,
+            !ehPt(estado.idioma)
+              ? `Document approved by the user (${join(".ryker", "visao.html")}). Vision approved. Continue now, in this same turn, without the user: plan and carry out what the vision describes. Decide every implementation choice yourself (models, reasoning effort, which agents, approach, order) and record them as assumptions in the plan; never ask the user about them. Only a genuine macro doubt (what/why/scope) is reported to the user, and that means reopening the discussion. Note: the new Ryker has no stages after the Global Discussion yet.${aviso}`
+              : `Documento aprovado pelo usuário (${join(".ryker", "visao.html")}). Visão aprovada. Continue agora, neste mesmo turno, sem o usuário: planeje e execute o que a visão descreve. Decida você toda escolha de implementação (modelos, esforço de raciocínio, quais agentes, abordagem, ordem) e registre-as como suposições no plano; nunca pergunte isso ao usuário. Só uma dúvida macro genuína (o quê/porquê/escopo) é levada ao usuário, e isso significa reabrir a discussão. Atenção: o Ryker novo ainda não tem etapas depois da Discussão Global.${aviso}`,
           ),
           details: { aprovado: true },
-          terminate: true,
         };
       }
       if (r.resultado === "reaberta") {
