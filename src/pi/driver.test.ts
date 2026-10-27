@@ -109,8 +109,6 @@ function harness(script: Script): Harness {
   const snapshot = createControlSnapshot({
     listPaths: () => [CONTROL],
     read: (path) => control.get(path),
-    write: (path, text) => void control.set(path, text),
-    remove: (path) => void control.delete(path),
     loadCopy: () => storedCopy,
     saveCopy: (copy) => {
       storedCopy = copy;
@@ -348,6 +346,27 @@ test("driver: a control file changed outside an execution pauses the cycle (M2b)
   assert.match(h.notices.join("\n"), /changed outside an agent execution/);
   assert.equal(driver.record().closed, undefined);
   assert.equal(h.prompts.length, 1);
+  assert.equal(h.control.get(CONTROL), '{"edited":"by hand"}');
+  assert.match(
+    driver.record().note ?? "",
+    new RegExp(CONTROL.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")),
+  );
+});
+
+test("driver: resuming after an outside change accepts the current state and continues (M2b)", async () => {
+  const h = harness(writeApprovedReview);
+  let prepared = 0;
+  h.ports.files.ensureDir = () => {
+    prepared += 1;
+    if (prepared === 2) h.control.set(CONTROL, '{"edited":"by hand"}');
+  };
+  const driver = createStageDriver(fresh(), h.ports);
+  await driver.run();
+  assert.equal(driver.record().runState, "paused");
+  await driver.resume();
+  while (driver.record().runState === "running") await new Promise((done) => setImmediate(done));
+  assert.equal(driver.record().closed, "stageNotBuilt");
+  assert.equal(h.control.get(CONTROL), '{"edited":"by hand"}');
 });
 
 test("driver: commands left running by the agent fail the round (C1b, P40)", async () => {
@@ -594,6 +613,20 @@ test("driver: a plan task naming a repository outside the cycle fails the code c
     h.prompts.every((p) => p.includes("planner")),
     true,
   );
+});
+
+test("driver: the planner and reviewer are told the cycle repositories and a relative one is accepted (B12)", async () => {
+  const h = harness((role, dir, fs, round) => {
+    if (role === "planner")
+      fs.set(planPath(CYCLE_DIR), VALID_PLAN.replace("repository: /p", "repository: ."));
+    return writeApprovedReview(role, dir, fs, round);
+  });
+  const driver = createStageDriver(fresh(), h.ports);
+  await driver.run();
+  assert.equal(driver.record().closed, "stageNotBuilt");
+  assert.match(h.prompts[0] ?? "", /repositorios\.md/);
+  assert.match(h.prompts[1] ?? "", /repositorios\.md/);
+  assert.match(h.fs.get(join(CYCLE_DIR, "repositorios.md")) ?? "", /\/p/);
 });
 
 test("driver: round 2 planner and reviewer receive the round 1 review (B7)", async () => {

@@ -8,8 +8,6 @@ function memory(initial: Record<string, string>, stored?: Record<string, string>
   const ports: ControlSnapshotPorts = {
     listPaths: () => [...live.keys()],
     read: (path) => live.get(path),
-    write: (path, text) => void live.set(path, text),
-    remove: (path) => void live.delete(path),
     loadCopy: () => copy,
     saveCopy: (snapshot) => {
       copy = { ...snapshot };
@@ -71,19 +69,20 @@ test("controlSnapshot: recordWrite of a removed file drops it from the copy", ()
   assert.deepEqual(snapshot.outsideChanges([]), []);
 });
 
-test("controlSnapshot: restore rewrites changed, recreates removed and deletes added files", () => {
+test("controlSnapshot: seed accepts the current state and never touches the live files (M2b)", () => {
   const env = memory({ a: "1", b: "2" });
   const snapshot = createControlSnapshot(env.ports);
   snapshot.seed();
   env.live.set("a", "x");
   env.live.delete("b");
   env.live.set("c", "3");
-  snapshot.restore(snapshot.outsideChanges([]));
-  assert.deepEqual([...env.live.entries()].sort(), [
-    ["a", "1"],
-    ["b", "2"],
-  ]);
+  assert.equal(snapshot.outsideChanges([]).length, 3);
+  snapshot.seed();
   assert.deepEqual(snapshot.outsideChanges([]), []);
+  assert.deepEqual([...env.live.entries()].sort(), [
+    ["a", "x"],
+    ["c", "3"],
+  ]);
 });
 
 test("controlSnapshot: after a restart the on-disk copy is the reference (SUP-36)", () => {
@@ -91,8 +90,7 @@ test("controlSnapshot: after a restart the on-disk copy is the reference (SUP-36
   const resumed = createControlSnapshot(env.ports);
   resumed.load();
   assert.deepEqual(resumed.outsideChanges([]), ["a"]);
-  resumed.restore(["a"]);
-  assert.equal(env.live.get("a"), "original");
+  assert.equal(env.live.get("a"), "edited while pi was closed");
 });
 
 test("controlSnapshot: load without a stored copy reports nothing and seeds on demand", () => {

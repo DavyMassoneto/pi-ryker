@@ -22,13 +22,14 @@ import {
   executionLabel,
   planPath,
   progressPath,
+  repositoriesPath,
   reviewPath,
   templatePath,
 } from "../core/cyclePaths.ts";
 import type { CycleClosure, CycleRecord } from "../core/cycleRecord.ts";
 import { missingCoverage, parseReview } from "../core/findings.ts";
 import type { RestorePoint } from "../core/gitRefs.ts";
-import { validatePlan } from "../core/plan.ts";
+import { repositoriesText, validatePlan } from "../core/plan.ts";
 import {
   buildPlannerPrompt,
   buildReviewerPrompt,
@@ -110,6 +111,7 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
   let controller: AbortController | undefined;
   let suspended = false;
   let pendingFailure: string | undefined;
+  let acceptOutsideOnResume = false;
   const language = ports.config.language ?? record.language;
   const noticeLanguage = language;
 
@@ -213,9 +215,10 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
     ports.files.write(templatePath(dir, "plan"), PLAN_TEMPLATE);
     ports.files.write(templatePath(dir, "review"), REVIEW_TEMPLATE);
     const own = role === "planner" ? planPath(ports.cycleDir) : reviewPath(dir);
+    ports.files.write(repositoriesPath(ports.cycleDir), repositoriesText(record.directories));
     const outside = ports.snapshot.outsideChanges([own]);
     if (outside.length > 0) {
-      ports.snapshot.restore(outside);
+      acceptOutsideOnResume = true;
       enterPause({ note: outsideChangeNote(outside, noticeLanguage) });
       return "outside";
     }
@@ -305,7 +308,12 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
   const plannerFiles = (): string[] => {
     const feedback = codeCheckFeedbackPath(ports.cycleDir);
     const hasFeedback = (ports.files.read(feedback) ?? "").trim() !== "";
-    return [...ports.inputFiles, ...(hasFeedback ? [feedback] : []), ...earlierReviews()];
+    return [
+      ...ports.inputFiles,
+      repositoriesPath(ports.cycleDir),
+      ...(hasFeedback ? [feedback] : []),
+      ...earlierReviews(),
+    ];
   };
 
   const commonValues = (dir: string) => ({
@@ -360,7 +368,12 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
           language: language ?? "en",
           stage: record.cycle.stage,
           round: record.cycle.round,
-          files: [planFile, ...ports.inputFiles, ...earlierReviews()].join(", "),
+          files: [
+            planFile,
+            ...ports.inputFiles,
+            repositoriesPath(ports.cycleDir),
+            ...earlierReviews(),
+          ].join(", "),
           stageExtras: "the plan and the cycle configuration",
           stageChecks: STAGE_CHECKS[2],
           progressPath: progressPath(dir),
@@ -532,6 +545,10 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
           return { ok: false, reason: "answer whether the cancelled execution was stuck first" };
         }
         if (isStopped()) return { ok: true };
+        if (acceptOutsideOnResume) {
+          acceptOutsideOnResume = false;
+          ports.snapshot.seed();
+        }
         void run();
         return { ok: true };
       } catch (error) {

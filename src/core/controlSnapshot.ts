@@ -5,8 +5,6 @@ export type ControlCopy = Record<string, string>;
 export interface ControlSnapshotPorts {
   listPaths(): string[];
   read(path: string): string | undefined;
-  write(path: string, text: string): void;
-  remove(path: string): void;
   loadCopy(): ControlCopy | undefined;
   saveCopy(copy: ControlCopy): void;
 }
@@ -16,7 +14,6 @@ export interface ControlSnapshot {
   load(): boolean;
   recordWrite(paths: readonly string[]): void;
   outsideChanges(exempt: readonly string[]): string[];
-  restore(paths: readonly string[]): void;
 }
 
 export function createControlSnapshot(ports: ControlSnapshotPorts): ControlSnapshot {
@@ -60,14 +57,6 @@ export function createControlSnapshot(ports: ControlSnapshotPorts): ControlSnaps
       const diff = diffManifests(buildManifest(reference), buildManifest(liveFiles()));
       const skipped = new Set(exempt);
       return [...diff.changed, ...diff.added, ...diff.removed].filter((path) => !skipped.has(path));
-    },
-    restore(paths) {
-      if (reference === undefined) return;
-      for (const path of paths) {
-        const text = reference[path];
-        if (text === undefined) ports.remove(path);
-        else ports.write(path, text);
-      }
     },
   };
 }
