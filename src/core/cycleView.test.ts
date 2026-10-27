@@ -1,0 +1,35 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { newCycleRecord } from "./cycleRecord.ts";
+import { ownerStatus, ownerWidget, readerStatus, stageName } from "./cycleView.ts";
+
+const base = newCycleRecord({
+  cycleId: "c1",
+  ownerSession: "s1",
+  epoch: 1,
+  directories: ["/p"],
+  language: "en",
+});
+
+test("view: owner status shows stage, round and tokens", () => {
+  const line = ownerStatus({
+    ...base,
+    tokens: [{ stage: 2, model: "m", input: 1000, output: 500, cacheRead: 0, cacheWrite: 0 }],
+  });
+  assert.equal(line, "Ryker · 2/6 Planning · round 1/2 · 1.5k tokens");
+});
+
+test("view: reader status is read only", () => {
+  assert.match(readerStatus(base), /read only/);
+});
+
+test("view: widget marks stage 2 current while running and done when approved", () => {
+  assert.match(ownerWidget(base)[2] ?? "", /^\[>\] 2 Planning/);
+  const approved = ownerWidget({ ...base, cycle: { ...base.cycle, phase: "approved" } });
+  assert.match(approved[2] ?? "", /^\[x\] 2 Planning\s+round 1 approved/);
+});
+
+test("view: stage names follow the language", () => {
+  assert.equal(stageName(2, "pt-BR"), "Planejamento");
+  assert.equal(stageName(2, "en"), "Planning");
+});

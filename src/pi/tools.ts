@@ -5,7 +5,7 @@ import { type QuestionInput, validateQuestions } from "../core/questions.ts";
 import { isStageActive } from "../core/state.ts";
 import { statusText } from "../core/status.ts";
 import { openTopics } from "../core/topics.ts";
-import { readState, saveState } from "./persistence.ts";
+import { ownershipRefusal, readState, saveState } from "./persistence.ts";
 import { askBatch } from "./ui.ts";
 
 const now = (): string => new Date().toISOString();
@@ -49,6 +49,8 @@ export function registerTools(pi: ExtensionAPI): void {
       if (stateRead.kind !== "ok" || !isStageActive(stateRead.state)) {
         throw new Error("Não há Discussão Global ativa; o usuário inicia com /ryker <pedido>.");
       }
+      const refusal = ownershipRefusal(stateRead.state, ctx.sessionManager.getSessionId());
+      if (refusal) throw new Error(refusal);
       if (!ctx.hasUI) throw new Error("ryker_perguntar precisa de interface interativa.");
       const languageResult = resolveLanguage(stateRead.state, params.idioma);
       if (!languageResult.ok) throw new Error(languageResult.error);

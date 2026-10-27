@@ -1,11 +1,16 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { stageToolSet } from "../core/activeTools.ts";
+import { ownerWidget, readerStatus } from "../core/cycleView.ts";
 import { chooseOpus, modelLabel } from "../core/model.ts";
 import { reopenedMessage } from "../core/reopening.ts";
+import { claimOwner } from "../core/session.ts";
 import { createState, type DiscussionState, isStageActive, type ModelRef } from "../core/state.ts";
 import { statusText } from "../core/status.ts";
 import { approvalDialog, correctionLoop, reopenAndWrite } from "./approval.ts";
-import { archiveApproved, readState, saveState } from "./persistence.ts";
+import { isCycleSubcommand, runCycleCommand } from "./cycleCommands.ts";
+import { defaultHostDeps } from "./cycleHost.ts";
+import { archiveApproved, ownershipRefusal, readState, saveState } from "./persistence.ts";
+import { projectSessionView } from "./projectSession.ts";
 
 async function chooseStageModel(
   pi: ExtensionAPI,
@@ -43,9 +48,24 @@ async function chooseStageModel(
 
 export function registerCommand(pi: ExtensionAPI): void {
   pi.registerCommand("ryker", {
-    description: "Discussão Global do Ryker: /ryker <pedido> | /ryker reabrir | /ryker (status)",
+    description:
+      "Ryker: /ryker <pedido> | /ryker reabrir | /ryker parar | /ryker pausar | /ryker retomar | /ryker (status)",
     async handler(args, ctx) {
       const request = args.trim();
+      const sessionId = ctx.sessionManager.getSessionId();
+      if (isCycleSubcommand(request)) {
+        ctx.ui.notify(await runCycleCommand(request, ctx, pi), "info");
+        return;
+      }
+      const cycleView = projectSessionView(ctx.cwd, sessionId, defaultHostDeps().agentDir);
+      if (!request && cycleView.record) {
+        const shown =
+          cycleView.role === "owner"
+            ? ownerWidget(cycleView.record).join("\n")
+            : readerStatus(cycleView.record);
+        ctx.ui.notify(shown, "info");
+        return;
+      }
       const stateRead = readState(ctx.cwd);
       if (stateRead.kind === "corrupted") {
         ctx.ui.notify(
@@ -54,7 +74,18 @@ export function registerCommand(pi: ExtensionAPI): void {
         );
         return;
       }
-      const existing = stateRead.kind === "ok" ? stateRead.state : undefined;
+      let existing = stateRead.kind === "ok" ? stateRead.state : undefined;
+      if (existing) {
+        const refusal = ownershipRefusal(existing, sessionId);
+        if (refusal) {
+          ctx.ui.notify(refusal, "warning");
+          return;
+        }
+        if (existing.donoSessao === undefined) {
+          existing = claimOwner(existing, sessionId);
+          saveState(pi, ctx.cwd, existing);
+        }
+      }
 
       if (request === "reabrir") {
         if (!isStageActive(existing)) {
@@ -127,12 +158,15 @@ export function registerCommand(pi: ExtensionAPI): void {
         ctx.ui.notify("Discussão Global cancelada.", "info");
         return;
       }
-      const state: DiscussionState = createState({
-        request: request,
-        now: new Date().toISOString(),
-        previous: previous,
-        ...(m.model ? { stageModel: m.model } : {}),
-      });
+      const state: DiscussionState = claimOwner(
+        createState({
+          request: request,
+          now: new Date().toISOString(),
+          previous: previous,
+          ...(m.model ? { stageModel: m.model } : {}),
+        }),
+        sessionId,
+      );
       pi.setActiveTools(stageToolSet());
       saveState(pi, ctx.cwd, state);
       ctx.ui.setStatus("ryker", statusText(state));

@@ -28,7 +28,7 @@ export function postApprovalPromptSection(): string {
   return `# Ryker — após a aprovação da visão
 
 A visão foi aprovada em .ryker/visao.html. ${POST_APPROVAL_RULE}
-Planeje e execute o que a visão descreve, sem o usuário. Não use ${BLOCKED_TOOL}: ela segue bloqueada.`;
+O ciclo (planejador e revisor da etapa 2) é conduzido pelo código do Ryker, que roda por conta própria; não planeje nem execute o que a visão descreve. /ryker parar, /ryker pausar e /ryker retomar são do usuário. Não use ${BLOCKED_TOOL}: ela segue bloqueada.`;
 }
 
 function languageLine(state: DiscussionState): string {

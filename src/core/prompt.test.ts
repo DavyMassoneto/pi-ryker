@@ -66,7 +66,7 @@ test("promptSection: only a finding that requires a macro decision becomes a que
 test("postApprovalPromptSection: user is not asked and follows the vision", () => {
   const s = postApprovalPromptSection();
   assert.match(s, /não é perguntado/);
-  assert.match(s, /visão descreve/);
+  assert.match(s, /conduzido pelo código do Ryker/);
 });
 
 test("promptSection: without language requires 'idioma' on the first call; with language asks to keep it", () => {

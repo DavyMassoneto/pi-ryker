@@ -441,3 +441,20 @@ New files, named in English from the start. The plan uses the Portuguese names o
 | `src/core/status.ts` (cycle part) | `src/core/cycleStatus.ts` (the Discussion `status.ts` is unchanged) |
 
 Persisted names kept: `donoSessao` in `DiscussionState` (state version 2; a version 1 file migrates on read, with no owner), and the lock file `.pi/ryker/trava.json`.
+
+## Stage driver pi layer (F1a, part 2)
+
+| Plan | New |
+|---|---|
+| `src/pi/agente.ts` | `src/pi/agent.ts` |
+| `src/pi/guardaFilho.ts` | `src/pi/childGuard.ts` (rules in `src/core/childGuardRules.ts`) |
+| `src/pi/sessaoDona.ts` | `src/pi/projectSession.ts` (rules in `src/core/ownerRules.ts`) |
+| `src/pi/driver.ts` | `src/pi/driver.ts` (wired by `src/pi/cycleHost.ts`) |
+| `src/pi/processos.ts` | `src/pi/processes.ts` |
+| `/ryker parar`, `pausar`, `retomar` | `src/pi/cycleCommands.ts`; the subcommand names stay in Portuguese |
+
+Also new: `src/pi/lease.ts` (lock acquisition, heartbeat, release), `src/pi/fsAdapters.ts` (lock store, control-file snapshot and restore, open-cycles index, git aliases, `.git/info/exclude`), `src/pi/liveness.ts` (pi-web registry), `src/core/cycleConfig.ts`, `cycleRecord.ts`, `cyclePaths.ts`, `cycleView.ts`, `cycleMessages.ts`, `coverage.ts`, `toolCalls.ts`.
+
+Persisted names kept: `.pi/ryker/config.json`, `ciclo.json`, `trava.json`, `discussao.json` (read from the legacy `.ryker/discussao.json` when the new file is absent), `ciclos-abertos.json`, `plano.md`, `revisao.md`, `progresso.md`, entry type `ryker-ciclo`.
+
+Left for a later slice: git restore points and branch/HEAD check, skills override from the final branch, new session when the progress file does not fit, descendant process tree of detached processes, memory-write refusal and skill neutralization in the owner session, takeover by another session, the history folder for the vision document.
