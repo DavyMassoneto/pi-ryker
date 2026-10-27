@@ -30,6 +30,9 @@ export const codeCheckFeedbackPath = (cycleDir: string): string =>
 
 export const repositoriesPath = (cycleDir: string): string => join(cycleDir, "repositorios.md");
 
+export const isRuntimeFile = (name: string): boolean =>
+  name === "progresso.md" || name.endsWith(".jsonl");
+
 export interface ExecutionAddress {
   attempt: number;
   stage: number;

@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ControlSnapshotPorts } from "../core/controlSnapshot.ts";
-import { configPath, cycleRecordPath, gitControlPaths } from "../core/cyclePaths.ts";
+import { configPath, cycleRecordPath, gitControlPaths, isRuntimeFile } from "../core/cyclePaths.ts";
 import { type LockStore, lockPath } from "../core/lock.ts";
 import type { OpenCycleEntry } from "../core/openCycles.ts";
 import type { ControlSnapshot } from "./driver.ts";
@@ -92,14 +92,13 @@ export function controlFs(directory: string, gitRoot: string) {
 
 const COPY_FOLDER = "controle";
 const COPY_FILE = "controle.json";
-const PROGRESS_FILE = "progresso.md";
 
 function filesUnder(folder: string, skipFolder: string): string[] {
   try {
     return readdirSync(folder, { withFileTypes: true }).flatMap((entry) => {
       const path = join(folder, entry.name);
       if (entry.isDirectory()) return path === skipFolder ? [] : filesUnder(path, skipFolder);
-      return entry.isFile() && entry.name !== PROGRESS_FILE ? [path] : [];
+      return entry.isFile() && !isRuntimeFile(entry.name) ? [path] : [];
     });
   } catch {
     return [];

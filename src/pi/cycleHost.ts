@@ -22,6 +22,7 @@ import {
   configPath,
   cycleHistoryDir,
   cycleRecordPath,
+  isRuntimeFile,
   openCyclesIndexPath,
   planPath,
   projectHistoryDir,
@@ -197,7 +198,7 @@ function recordTree(snapshot: ControlSnapshot, folder: string): void {
     for (const entry of entries) {
       const path = join(current, entry.name);
       if (entry.isDirectory()) walk(path);
-      else if (entry.isFile() && entry.name !== "progresso.md") files.push(path);
+      else if (entry.isFile() && !isRuntimeFile(entry.name)) files.push(path);
     }
   };
   walk(folder);

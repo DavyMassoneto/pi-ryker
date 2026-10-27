@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { createControlSnapshot } from "../core/controlSnapshot.ts";
 import {
   addOpenCycle,
   controlFs,
@@ -114,5 +115,25 @@ test("fs: excluding .pi/ryker is idempotent (SUP-7)", () => {
     readFileSync(join(root, ".git", "info", "exclude"), "utf8"),
     "node_modules\n.pi/ryker\n",
   );
+  rmSync(root, { recursive: true });
+});
+
+test("fs: runtime files written by a child, even late, are not outside changes", () => {
+  const root = repository();
+  const cycleDir = join(root, "history", "cycle");
+  const execution = join(cycleDir, "tentativa-001", "etapa-2", "rodada-001", "planner-01");
+  mkdirSync(execution, { recursive: true });
+  writeFileSync(join(cycleDir, "visao.html"), "vision");
+  writeFileSync(join(execution, "session.jsonl"), "a");
+  writeFileSync(join(execution, "transcricao.jsonl"), "a");
+  writeFileSync(join(execution, "progresso.md"), "a");
+  const snapshot = createControlSnapshot(controlSnapshotPorts(root, root, cycleDir));
+  snapshot.seed();
+  writeFileSync(join(execution, "session.jsonl"), "late append");
+  writeFileSync(join(execution, "later.jsonl"), "new transcript");
+  writeFileSync(join(execution, "progresso.md"), "late");
+  assert.deepEqual(snapshot.outsideChanges([]), []);
+  writeFileSync(join(cycleDir, "visao.html"), "tampered");
+  assert.equal(snapshot.outsideChanges([]).length, 1);
   rmSync(root, { recursive: true });
 });

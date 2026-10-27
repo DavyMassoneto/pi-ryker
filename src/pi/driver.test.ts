@@ -377,6 +377,37 @@ test("driver: an agent changing cycle folder files is restored and the round fai
   assert.equal(driver.record().cycle.phase, "stopped");
 });
 
+test("driver: a late write of the current review by an old child after a stop is not an outside change", async () => {
+  const h = harness(writeApprovedReview);
+  const first = createStageDriver(fresh(), h.ports);
+  h.ports.runAgent = async () => {
+    first.stop();
+    return {
+      text: "",
+      aborted: true,
+      leftoverCommands: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+  };
+  await first.run();
+  h.folder.set(
+    join(CYCLE_DIR, "tentativa-001", "etapa-2", "rodada-001", "reviewer-01", "revisao.md"),
+    "late",
+  );
+  h.ports.runAgent = async (role, _prompt, dir) => {
+    writeApprovedReview(role, dir, h.fs, 1);
+    return {
+      text: "STATUS: DONE",
+      aborted: false,
+      leftoverCommands: 0,
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+    };
+  };
+  await first.resume();
+  while (first.record().runState === "running") await new Promise((done) => setImmediate(done));
+  assert.doesNotMatch(h.notices.join("\n"), /outside an agent execution/);
+});
+
 test("driver: the accept-on-resume request survives a restart (N30)", async () => {
   const h = harness(writeApprovedReview);
   let prepared = 0;

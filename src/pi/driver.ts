@@ -215,7 +215,17 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
     ports.files.write(templatePath(dir, "review"), REVIEW_TEMPLATE);
     const own = role === "planner" ? planPath(ports.cycleDir) : reviewPath(dir);
     ports.files.write(repositoriesPath(ports.cycleDir), repositoriesText(record.directories));
-    const outside = ports.snapshot.outsideChanges([own]);
+    const currentReview = reviewPath(
+      executionDir(ports.cycleDir, {
+        attempt: record.attempt,
+        stage: record.cycle.stage,
+        round: record.cycle.round,
+        role: "reviewer",
+      }),
+    );
+    const outside = ports.snapshot.outsideChanges(
+      role === "planner" ? [own, currentReview] : [own],
+    );
     if (outside.length > 0) {
       enterPause({ note: outsideChangeNote(outside, noticeLanguage), acceptOutside: true });
       return "outside";
