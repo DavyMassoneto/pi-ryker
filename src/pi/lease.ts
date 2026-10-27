@@ -18,6 +18,7 @@ export interface LeaseParams {
   now: () => number;
   confirmTakeover?: boolean;
   remove: (path: string) => void;
+  onWrite?: (path: string) => void;
 }
 
 export type LeaseResult =
@@ -35,6 +36,7 @@ export function acquireLease(p: LeaseParams): LeaseResult {
     ...(p.confirmTakeover ? { confirmTakeover: true } : {}),
   });
   if (!acquired.ok) return { ok: false, reason: acquired.reason };
+  p.onWrite?.(p.path);
   const epoch = acquired.record.epoch;
   const stillMine = (): boolean => epochStillMine(p.store.read(p.path), p.sessionId, epoch);
   return {
@@ -52,6 +54,7 @@ export function acquireLease(p: LeaseParams): LeaseResult {
           now: p.now(),
           expiryMs: LOCK_EXPIRY_MS,
         });
+        if (beat.ok) p.onWrite?.(p.path);
         return beat.ok && beat.record.epoch === epoch;
       },
       release: () => {

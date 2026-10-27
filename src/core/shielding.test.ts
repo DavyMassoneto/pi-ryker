@@ -5,6 +5,7 @@ import {
   checkAgentShell,
   checkOwnerSessionShell,
   checkOwnerSessionTool,
+  parsePiWebRun,
   type ShellContext,
 } from "./shielding.ts";
 
@@ -119,9 +120,86 @@ test("a sibling folder with the same prefix is outside (SUP-46)", () => {
   assert.equal(refused("cat /work/project-other/a.txt"), true);
 });
 
-test("PI_CODING_AGENT_DIR and PI_HOME are injected pointing at the execution folder (SUP-47)", () => {
-  assert.deepEqual(agentShellEnv("/hist/run-01/pi"), {
-    PI_CODING_AGENT_DIR: "/hist/run-01/pi",
-    PI_HOME: "/hist/run-01/pi",
+test("git hidden behind substitution, subshell, backtick, braces and env prefixes is refused (P6)", () => {
+  for (const command of [
+    "$(git push)",
+    "(git push)",
+    "echo `git push`",
+    "x=$(git commit -m a)",
+    ";git push",
+    "&&git push",
+    "|git push",
+    "FOO=1 git push",
+    "FOO=1 BAR=2 git reset --hard",
+    "{ git fetch; }",
+    '"git" remote add x y',
+    "env GIT_DIR=x git worktree add y",
+  ]) {
+    assert.equal(refused(command), true, command);
+  }
+  assert.equal(refused("echo $(git status)"), false);
+});
+
+test("home variables in every spelling are expanded before the path check (SUP-46)", () => {
+  for (const command of [
+    "cat $USERPROFILE/.pi/agent/auth.json",
+    "cat ${HOME}/.ssh/id_rsa",
+    "cat ${USERPROFILE}/x",
+    "type %USERPROFILE%/x",
+    "cat $env:USERPROFILE/x",
+    "cat ~/x",
+    "cat --file=~/x",
+  ]) {
+    assert.equal(refused(command), true, command);
+  }
+  assert.equal(refused("cat $HOME/../../work/project/a.txt"), false);
+});
+
+const homeInsideProject: ShellContext = { ...ctx, homeDir: "/work/project/home" };
+
+test("a home variable that expands inside the project passes (SUP-46)", () => {
+  assert.equal(checkAgentShell("cat $USERPROFILE/a.txt", homeInsideProject).ok, true);
+});
+
+const noConfig: ShellContext = {
+  ...ctx,
+  piWeb: undefined,
+  piWebRuns: [{ hosts: ["100.91.99.83", "mybox"], port: 3041 }],
+};
+
+test("pi-web is refused with no hand-written config, from the running registry (P4, 18.3)", () => {
+  for (const command of [
+    "curl http://100.91.99.83:3041/",
+    "curl http://mybox:3041",
+    "curl http://localhost:3041",
+    "curl http://[::1]:3041/",
+    "curl http://0.0.0.0:3041",
+    "curl http://127.0.0.2:3041",
+    "curl http://100.100.5.5:3041",
+  ]) {
+    assert.equal(checkAgentShell(command, noConfig).ok, false, command);
+    assert.equal(checkOwnerSessionShell(command, noConfig).ok, false, command);
+  }
+  assert.equal(checkAgentShell("curl http://localhost:8080", noConfig).ok, true);
+  assert.equal(checkAgentShell("curl https://example.com:3041", noConfig).ok, true);
+});
+
+test("pi-web registry entries are parsed and bad ones ignored (18.3)", () => {
+  assert.deepEqual(
+    parsePiWebRun(
+      '{"pid":1,"port":3041,"hostname":"100.91.99.83","url":"http://100.91.99.83:3041"}',
+    ),
+    { hosts: ["100.91.99.83"], port: 3041 },
+  );
+  assert.equal(parsePiWebRun("not json"), undefined);
+  assert.equal(parsePiWebRun('{"port":"x"}'), undefined);
+});
+
+test("the agent folder env is isolated and refuses to sit inside protected folders (SUP-47)", () => {
+  assert.deepEqual(agentShellEnv("/iso/pi"), {
+    PI_CODING_AGENT_DIR: "/iso/pi",
+    PI_HOME: "/iso/pi",
   });
+  assert.throws(() => agentShellEnv("/cycle/run-01/pi", ["/cycle"]));
+  assert.doesNotThrow(() => agentShellEnv("/iso/pi", ["/cycle", "/work/project"]));
 });

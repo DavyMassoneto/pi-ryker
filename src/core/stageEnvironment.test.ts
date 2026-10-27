@@ -1,13 +1,6 @@
 import assert from "node:assert/strict";
-import { resolve } from "node:path";
 import { test } from "node:test";
-import {
-  contextFilesFor,
-  isEnvironmentPath,
-  replaceProjectContextFiles,
-  replaceProjectSkills,
-  skillFoldersFor,
-} from "./stageEnvironment.ts";
+import { contextFilesFor, isEnvironmentPath, skillFoldersFor } from "./stageEnvironment.ts";
 
 test("stage environment: skills, agent definitions and context files are environment paths (S7)", () => {
   assert.equal(isEnvironmentPath("AGENTS.md"), true);
@@ -37,29 +30,4 @@ test("stage environment: project skill folders follow pi's discovery (S7)", () =
     "pkg/.agents/skills",
     ".agents/skills",
   ]);
-});
-
-test("stage environment: project context files are replaced by the final-branch ones (S7)", () => {
-  const root = resolve("/repo");
-  const base = [
-    { path: resolve("/agent/AGENTS.md"), content: "global" },
-    { path: resolve("/repo/AGENTS.md"), content: "working tree" },
-  ];
-  const branch = [{ path: resolve("/repo/AGENTS.md"), content: "final branch" }];
-  assert.deepEqual(replaceProjectContextFiles(base, root, branch), [
-    { path: resolve("/agent/AGENTS.md"), content: "global" },
-    { path: resolve("/repo/AGENTS.md"), content: "final branch" },
-  ]);
-});
-
-test("stage environment: project skills are replaced, user and package skills stay (S7)", () => {
-  const base = [
-    { name: "mine", sourceInfo: { scope: "user" } },
-    { name: "local", sourceInfo: { scope: "project" } },
-  ];
-  const branch = [{ name: "tracked", sourceInfo: { scope: "temporary" } }];
-  assert.deepEqual(
-    replaceProjectSkills(base, branch).map((skill) => skill.name),
-    ["mine", "tracked"],
-  );
 });

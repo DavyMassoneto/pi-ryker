@@ -16,9 +16,14 @@ export const CYCLE_SUBCOMMANDS: Readonly<Record<string, CycleCommand>> = {
   parar: "stop",
   pausar: "pause",
   retomar: "resume",
+  voltar: "back",
+  encerrar: "end",
 };
 
-export const isCycleSubcommand = (word: string): boolean => word in CYCLE_SUBCOMMANDS;
+export const UNAVAILABLE_SUBCOMMANDS: readonly string[] = ["desligar", "aprovar"];
+
+export const isCycleSubcommand = (word: string): boolean =>
+  word in CYCLE_SUBCOMMANDS || UNAVAILABLE_SUBCOMMANDS.includes(word);
 
 async function apply(command: CycleCommand, handle: CycleHandle): Promise<string> {
   const driver = handle.driver;
@@ -30,6 +35,11 @@ async function apply(command: CycleCommand, handle: CycleHandle): Promise<string
   if (command === "pause") {
     driver.requestPause();
     return commandReply("pauseDeferred", language);
+  }
+  if (command === "back" || command === "end") {
+    const left = command === "back" ? driver.back() : driver.end();
+    const done = command === "back" ? "backToDiscussion" : "ended";
+    return left.ok ? commandReply(done, language) : left.reason;
   }
   const resumed = await driver.resume();
   return resumed.ok ? commandReply("resumed", language) : resumed.reason;
@@ -55,9 +65,10 @@ export async function runCycleCommand(
   deps: HostDeps = defaultHostDeps(),
 ): Promise<string> {
   const command = CYCLE_SUBCOMMANDS[subcommand];
+  if (!command) return commandReply("notAvailable");
   const sessionId = ctx.sessionManager.getSessionId();
   const handle = cycleHandles.get(sessionId) ?? attachExistingCycle(messenger, ctx, deps);
-  if (!handle || !command) {
+  if (!handle) {
     const view = projectSessionView(ctx.cwd, sessionId, deps.agentDir);
     if (view.role === "reader" && command === "resume") return takeOver(ctx, messenger, deps);
     return commandReply(view.role === "reader" ? "readerOnly" : "noCycle", view.record?.language);

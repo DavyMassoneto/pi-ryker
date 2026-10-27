@@ -15,6 +15,7 @@ export interface Plan {
 export interface PlanOptions {
   owners: readonly string[];
   returnFromStage5?: boolean;
+  repositories?: readonly string[];
 }
 
 export type PlanResult = { ok: true; plan: Plan } | { ok: false; problems: string[] };
@@ -79,6 +80,11 @@ function buildTask(
   problems: string[],
 ): PlanTask {
   const value = (key: string): string => raw.fields.get(key)?.[0] ?? "";
+  const repository = value("repository");
+  if (repository === "") problems.push(`task ${raw.id}: missing repository`);
+  else if (options.repositories && !options.repositories.includes(repository)) {
+    problems.push(`task ${raw.id}: repository ${repository} is not a cycle repository`);
+  }
   const owner = value("owner");
   if (owner === "") problems.push(`task ${raw.id}: missing owner`);
   else if (owner !== GLOBAL_ROLE && !options.owners.includes(owner)) {
@@ -96,7 +102,7 @@ function buildTask(
   }
   return {
     id: raw.id,
-    repository: value("repository"),
+    repository,
     owner,
     paths,
     tests,

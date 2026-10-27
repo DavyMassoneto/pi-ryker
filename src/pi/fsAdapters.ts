@@ -10,8 +10,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import type { ControlSnapshotPorts } from "../core/controlSnapshot.ts";
 import { configPath, cycleRecordPath, gitControlPaths } from "../core/cyclePaths.ts";
-import type { LockStore } from "../core/lock.ts";
+import { type LockStore, lockPath } from "../core/lock.ts";
 import type { OpenCycleEntry } from "../core/openCycles.ts";
 import type { ControlSnapshot } from "./driver.ts";
 
@@ -86,6 +87,52 @@ export function controlFs(directory: string, gitRoot: string) {
         if (!(path in before)) rmSync(path, { force: true });
       }
     },
+  };
+}
+
+const COPY_FOLDER = "controle";
+const COPY_FILE = "controle.json";
+const PROGRESS_FILE = "progresso.md";
+
+function filesUnder(folder: string, skipFolder: string): string[] {
+  try {
+    return readdirSync(folder, { withFileTypes: true }).flatMap((entry) => {
+      const path = join(folder, entry.name);
+      if (entry.isDirectory()) return path === skipFolder ? [] : filesUnder(path, skipFolder);
+      return entry.isFile() && entry.name !== PROGRESS_FILE ? [path] : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+export function controlSnapshotPorts(
+  directory: string,
+  gitRoot: string,
+  cycleDir: string,
+): ControlSnapshotPorts {
+  const copyFolder = join(cycleDir, COPY_FOLDER);
+  const copyFile = join(copyFolder, COPY_FILE);
+  return {
+    listPaths: () => [
+      ...controlPaths(directory, gitRoot),
+      lockPath(gitRoot),
+      ...filesUnder(cycleDir, copyFolder),
+    ],
+    read: readText,
+    write: writeAtomic,
+    remove: removeFile,
+    loadCopy() {
+      try {
+        const parsed: unknown = JSON.parse(readText(copyFile) ?? "");
+        return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+          ? (parsed as Record<string, string>)
+          : undefined;
+      } catch {
+        return undefined;
+      }
+    },
+    saveCopy: (copy) => writeAtomic(copyFile, JSON.stringify(copy, null, 2)),
   };
 }
 

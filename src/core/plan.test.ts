@@ -82,6 +82,20 @@ test("owner outside the configuration is reported; global role is accepted (Q O 
   assert.equal(validatePlan(plan(TASK.replace("nucleo", "global")), { owners }).ok, true);
 });
 
+test("task without a repository is reported (B12)", () => {
+  const broken = TASK.replace("- repository: .\n", "");
+  const result = validatePlan(plan(broken), { owners });
+  assert.equal(result.ok, false);
+  assert.match(result.ok ? "" : result.problems.join("\n"), /T1.*repository/);
+});
+
+test("task repository must be one of the cycle repositories (B12)", () => {
+  assert.equal(validatePlan(plan(), { owners, repositories: ["."] }).ok, true);
+  const result = validatePlan(plan(), { owners, repositories: ["other"] });
+  assert.equal(result.ok, false);
+  assert.match(result.ok ? "" : result.problems.join("\n"), /T1.*repository \. is not/);
+});
+
 test("plan without any task is invalid", () => {
   assert.equal(validatePlan(plan(""), { owners }).ok, false);
 });

@@ -1,10 +1,16 @@
 import { isAbsolute, relative, resolve } from "node:path";
 
+export interface PiWebEndpoint {
+  hosts: readonly string[];
+  port: number;
+}
+
 export interface ShellContext {
   projectRoot: string;
   allowedRoots: readonly string[];
   homeDir: string;
-  piWeb: { hosts: readonly string[]; port: number } | undefined;
+  piWeb: PiWebEndpoint | undefined;
+  piWebRuns?: readonly PiWebEndpoint[];
   gitAliases: Readonly<Record<string, string>>;
 }
 
@@ -40,7 +46,11 @@ const AGENT_GIT_REFUSED = new Set([
 
 const REMOTE_GIT_REFUSED = new Set(["push", "pull", "fetch", "remote"]);
 const OPTIONS_WITH_ARGUMENT = new Set(["-C", "-c"]);
-const HOME_MARKERS = ["$HOME", "%USERPROFILE%"];
+const HOME_VARIABLE =
+  /\$\{(?:HOME|USERPROFILE)\}|\$env:(?:HOME|USERPROFILE)|\$(?:HOME|USERPROFILE)|%(?:HOME|USERPROFILE)%/i;
+const LOCAL_HOST =
+  /localhost|(?<![0-9.])127\.\d+\.\d+\.\d+|\[?::1\]?|0\.0\.0\.0|(?<![0-9.])100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+/i;
+const SEGMENT_SEPARATORS = /&&|\|\||[;|&\n`(){}]/;
 const NULL_DEVICE = "/dev/null";
 const ALIAS_DEPTH = 3;
 
@@ -60,7 +70,7 @@ function words(text: string): string[] {
 
 function gitSubcommands(command: string): string[] {
   const found: string[] = [];
-  for (const segment of command.split(/&&|\|\||[;|&\n]/)) {
+  for (const segment of command.split(SEGMENT_SEPARATORS)) {
     const tokens = words(segment);
     const at = tokens.findIndex((t) => /(^|[\\/])git(\.exe)?$/i.test(t));
     if (at < 0) continue;
@@ -92,11 +102,32 @@ function refusedGit(command: string, ctx: ShellContext, refused: Set<string>): s
   return undefined;
 }
 
-function citesPiWeb(command: string, piWeb: ShellContext["piWeb"]): boolean {
-  if (!piWeb) return false;
+function citesPort(command: string, port: number): boolean {
+  return new RegExp(`(?<![0-9])${port}(?![0-9])`).test(command);
+}
+
+function citesEndpoint(command: string, endpoint: PiWebEndpoint): boolean {
+  if (!citesPort(command, endpoint.port)) return false;
   const lower = command.toLowerCase();
-  const hasHost = piWeb.hosts.some((host) => lower.includes(host.toLowerCase()));
-  return hasHost && new RegExp(`(?<![0-9])${piWeb.port}(?![0-9])`).test(command);
+  return (
+    LOCAL_HOST.test(command) || endpoint.hosts.some((host) => lower.includes(host.toLowerCase()))
+  );
+}
+
+function citesPiWeb(command: string, ctx: ShellContext): boolean {
+  const endpoints = [...(ctx.piWeb ? [ctx.piWeb] : []), ...(ctx.piWebRuns ?? [])];
+  return endpoints.some((endpoint) => citesEndpoint(command, endpoint));
+}
+
+export function parsePiWebRun(text: string): PiWebEndpoint | undefined {
+  try {
+    const parsed = JSON.parse(text) as { port?: unknown; hostname?: unknown };
+    if (typeof parsed.port !== "number" || !Number.isInteger(parsed.port)) return undefined;
+    const hosts = typeof parsed.hostname === "string" ? [parsed.hostname] : [];
+    return { hosts, port: parsed.port };
+  } catch {
+    return undefined;
+  }
 }
 
 function pathCandidates(command: string): string[] {
@@ -109,15 +140,14 @@ function pathCandidates(command: string): string[] {
         t.startsWith("/") ||
         /^[A-Za-z]:[\\/]/.test(t) ||
         t.startsWith("~") ||
-        HOME_MARKERS.some((m) => t.includes(m)) ||
+        HOME_VARIABLE.test(t) ||
         t.split(/[\\/]/).includes(".."),
     );
 }
 
 function expandHome(token: string, homeDir: string): string {
-  let expanded = token.startsWith("~") ? homeDir + token.slice(1) : token;
-  for (const marker of HOME_MARKERS) expanded = expanded.replace(marker, homeDir);
-  return expanded;
+  const expanded = token.startsWith("~") ? homeDir + token.slice(1) : token;
+  return expanded.replace(new RegExp(HOME_VARIABLE.source, "gi"), () => homeDir);
 }
 
 function isInside(root: string, target: string): boolean {
@@ -137,8 +167,7 @@ function pathOutside(command: string, ctx: ShellContext): string | undefined {
 export function checkAgentShell(command: string, ctx: ShellContext): ShieldDecision {
   const git = refusedGit(command, ctx, AGENT_GIT_REFUSED);
   if (git) return refuse("D-R4-GIT", `git ${git} is not allowed for agents`);
-  if (citesPiWeb(command, ctx.piWeb))
-    return refuse("P4", "the pi-web address and port are off limits");
+  if (citesPiWeb(command, ctx)) return refuse("P4", "the pi-web address and port are off limits");
   const outside = pathOutside(command, ctx);
   if (outside)
     return refuse("SUP-46", `${outside} is outside the project and the declared folders`);
@@ -148,8 +177,7 @@ export function checkAgentShell(command: string, ctx: ShellContext): ShieldDecis
 export function checkOwnerSessionShell(command: string, ctx: ShellContext): ShieldDecision {
   const git = refusedGit(command, ctx, REMOTE_GIT_REFUSED);
   if (git) return refuse("C14.4", `git ${git} is not allowed while a cycle is open`);
-  if (citesPiWeb(command, ctx.piWeb))
-    return refuse("P4", "the pi-web address and port are off limits");
+  if (citesPiWeb(command, ctx)) return refuse("P4", "the pi-web address and port are off limits");
   return ok;
 }
 
@@ -159,6 +187,11 @@ export function checkOwnerSessionTool(toolName: string): ShieldDecision {
   return ok;
 }
 
-export function agentShellEnv(executionDir: string): Record<string, string> {
-  return { PI_CODING_AGENT_DIR: executionDir, PI_HOME: executionDir };
+export function agentShellEnv(
+  isolatedDir: string,
+  protectedRoots: readonly string[] = [],
+): Record<string, string> {
+  if (protectedRoots.some((root) => isInside(root, resolve(isolatedDir))))
+    throw new Error(`${isolatedDir} must be outside the project and the cycle folder`);
+  return { PI_CODING_AGENT_DIR: isolatedDir, PI_HOME: isolatedDir };
 }

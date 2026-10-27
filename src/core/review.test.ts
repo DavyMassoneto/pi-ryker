@@ -65,7 +65,7 @@ test("parseFindings: plain JSON, json fence, text without JSON, missing field", 
   assert.equal(a.length, 1);
   assert.equal(a[0].id, "a1");
   assert.equal(a[0].tema, "apetite");
-  assert.equal(parseFindings("Segue:\n```json\n" + json + "\n```\nfim")[0].texto, "x");
+  assert.equal(parseFindings(`Segue:\n\`\`\`json\n${json}\n\`\`\`\nfim`)[0].texto, "x");
   assert.deepEqual(parseFindings('{"achados":[]}'), []);
   assert.throws(() => parseFindings("não há json aqui"), /JSON/);
   assert.throws(

@@ -13,7 +13,6 @@ import {
   type Skill,
 } from "@earendil-works/pi-coding-agent";
 import type { Thinking } from "../core/cycleConfig.ts";
-import { replaceProjectContextFiles, replaceProjectSkills } from "../core/stageEnvironment.ts";
 import { trackShell } from "./processes.ts";
 import type { StageEnvironment } from "./stageEnvironment.ts";
 
@@ -92,22 +91,15 @@ function finalBranchSkills(environment: StageEnvironment): Skill[] {
     .flatMap((dir) => loadSkillsFromDir({ dir, source: FINAL_BRANCH_SOURCE }).skills);
 }
 
-function environmentOverrides(
+export function environmentOverrides(
   environment: StageEnvironment | undefined,
 ): Pick<LoaderOptions, "skillsOverride" | "agentsFilesOverride"> {
-  if (!environment) return {};
   return {
     skillsOverride: (base) => ({
-      skills: replaceProjectSkills(base.skills, finalBranchSkills(environment)),
+      skills: environment ? finalBranchSkills(environment) : [],
       diagnostics: base.diagnostics,
     }),
-    agentsFilesOverride: (base) => ({
-      agentsFiles: replaceProjectContextFiles(
-        base.agentsFiles,
-        environment.gitRoot,
-        environment.contextFiles,
-      ),
-    }),
+    agentsFilesOverride: () => ({ agentsFiles: environment ? environment.contextFiles : [] }),
   };
 }
 

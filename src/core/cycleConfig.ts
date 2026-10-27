@@ -9,6 +9,17 @@ export interface ModelChoice {
   thinking?: Thinking;
 }
 
+export const DEFAULT_PLANNER: ModelChoice = {
+  provider: "omni",
+  id: "cc/claude-opus-5-5",
+  thinking: "high",
+};
+export const DEFAULT_REVIEWER: ModelChoice = {
+  provider: "omni",
+  id: "cc/claude-opus-5-5",
+  thinking: "high",
+};
+
 export interface PiWebAddress {
   hosts: string[];
   port: number;

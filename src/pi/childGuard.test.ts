@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { resolve } from "node:path";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { hostname, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { type ChildGuardDeps, childGuardFactory } from "./childGuard.ts";
+import { type ChildGuardDeps, childGuardFactory, readRunningPiWebs } from "./childGuard.ts";
 
 type Handler = (event: unknown, ctx?: unknown) => Promise<unknown>;
 
@@ -109,4 +111,41 @@ test("child guard adapter: progress that does not fit cancels compaction and ask
   );
   assert.deepEqual(result, { cancel: true });
   assert.equal(requested, 1);
+});
+
+test("child guard adapter: refuses pi-web found in the running registry with no config (P4, 18.3)", async () => {
+  const handlers = install(deps({ piWebRuns: () => [{ hosts: ["100.91.99.83"], port: 3041 }] }));
+  const result = (await handlers.get("tool_call")?.({
+    toolName: "bash",
+    input: { command: "curl http://100.91.99.83:3041/" },
+  })) as { block: boolean; reason: string };
+  assert.equal(result.block, true);
+  assert.match(result.reason, /P4/);
+});
+
+test("child guard adapter: a registry lookup that throws fails closed", async () => {
+  const handlers = install(
+    deps({
+      piWebRuns: () => {
+        throw new Error("boom");
+      },
+    }),
+  );
+  const result = (await handlers.get("tool_call")?.({
+    toolName: "bash",
+    input: { command: "echo hi" },
+  })) as { block: boolean };
+  assert.equal(result.block, true);
+});
+
+test("default pi-web registry reader reads <dir>/<pid>.json and adds the machine names", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-web-run-"));
+  writeFileSync(join(dir, "1.json"), '{"port":3041,"hostname":"100.1.2.3"}');
+  writeFileSync(join(dir, "2.json"), "garbage");
+  const runs = readRunningPiWebs(dir);
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0]?.port, 3041);
+  assert.ok(runs[0]?.hosts.includes("100.1.2.3"));
+  assert.ok(runs[0]?.hosts.includes(hostname()));
+  assert.deepEqual(readRunningPiWebs(join(dir, "missing")), []);
 });

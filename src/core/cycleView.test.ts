@@ -42,3 +42,14 @@ test("view: stage names follow the language", () => {
   assert.equal(stageName(2, "pt-BR"), "Planejamento");
   assert.equal(stageName(2, "en"), "Planning");
 });
+
+test("the running widget names /ryker parar because the pi-web Stop button does not pause (B13)", () => {
+  const record = newCycleRecord({
+    cycleId: "c1",
+    ownerSession: "s",
+    epoch: 1,
+    directories: ["/p"],
+  });
+  assert.match(ownerWidget(record).join("|"), /\/ryker parar/);
+  assert.doesNotMatch(ownerWidget({ ...record, runState: "paused" }).join("|"), /parar/);
+});

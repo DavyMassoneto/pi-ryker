@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { parseCycleRecord } from "../src/core/cycleRecord.ts";
-import { cycleHandles, startStageTwo } from "../src/pi/cycleHost.ts";
+import { parseCycleRecord } from "../../src/core/cycleRecord.ts";
+import { cycleHandles, startStageTwo } from "../../src/pi/cycleHost.ts";
 import {
   approvedDiscussion,
   approvingChild,
@@ -38,10 +38,11 @@ test("happy path: an approved discussion runs stage 2 to approval and leaves its
     assert.ok(record.tokens.length > 0);
     assert.match(session.screen.statusHistory.at(-1) ?? "", /Planning · stage 3 not available · /);
     assert.match((session.screen.widgetHistory.at(-1) ?? [])[0] ?? "", /stage 3 not available$/);
-    assert.equal(pi.messages.length, 1);
-    assert.match(pi.messages[0] ?? "", /stage 2 \(Planning\) approved/);
-    assert.match(pi.messages[0] ?? "", /plano\.md/);
-    assert.match(pi.messages[0] ?? "", /Stage 3 is not available in this version/);
+    assert.equal(pi.messages.length, 2);
+    assert.match(pi.messages[0] ?? "", /cycle started at stage 2/);
+    assert.match(pi.messages[1] ?? "", /stage 2 \(Planning\) approved/);
+    assert.match(pi.messages[1] ?? "", /plano\.md/);
+    assert.match(pi.messages[1] ?? "", /Stage 3 is not available in this version/);
 
     assert.match(
       readFileSync(join(world.project, ".git", "info", "exclude"), "utf8"),

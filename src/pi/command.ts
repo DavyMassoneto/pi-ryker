@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { stageToolSet } from "../core/activeTools.ts";
+import { openCycleRefusal } from "../core/cycleMessages.ts";
 import { ownerWidget, readerStatus } from "../core/cycleView.ts";
 import { chooseOpus, modelLabel } from "../core/model.ts";
 import { reopenedMessage } from "../core/reopening.ts";
@@ -49,7 +50,7 @@ async function chooseStageModel(
 export function registerCommand(pi: ExtensionAPI): void {
   pi.registerCommand("ryker", {
     description:
-      "Ryker: /ryker <pedido> | /ryker reabrir | /ryker parar | /ryker pausar | /ryker retomar | /ryker (status)",
+      "Ryker: /ryker <pedido> | /ryker reabrir | /ryker parar | /ryker pausar | /ryker retomar | /ryker voltar | /ryker encerrar | /ryker (status)",
     async handler(args, ctx) {
       const request = args.trim();
       const sessionId = ctx.sessionManager.getSessionId();
@@ -64,6 +65,27 @@ export function registerCommand(pi: ExtensionAPI): void {
             ? ownerWidget(cycleView.record).join("\n")
             : readerStatus(cycleView.record);
         ctx.ui.notify(shown, "info");
+        return;
+      }
+      if (request && cycleView.role !== "none") {
+        const shown = cycleView.record
+          ? cycleView.role === "owner"
+            ? ownerWidget(cycleView.record).join("\n")
+            : readerStatus(cycleView.record)
+          : "";
+        ctx.ui.notify(
+          [
+            openCycleRefusal(
+              cycleView.record?.runState,
+              cycleView.role,
+              cycleView.record?.language,
+            ),
+            shown,
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          "warning",
+        );
         return;
       }
       const stateRead = readState(ctx.cwd);

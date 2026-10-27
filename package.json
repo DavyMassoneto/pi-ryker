@@ -37,9 +37,10 @@
   },
   "scripts": {
     "test": "node --test \"src/**/*.test.ts\"",
-    "test:e2e": "node --test \"e2e/**/*.e2e.ts\"",
+    "test:integration": "node --test \"test/integration/**/*.test.ts\"",
+    "e2e": "node --test --test-concurrency=1 \"e2e/scenarios/*.e2e.ts\"",
     "typecheck": "tsc --noEmit",
-    "lint": "biome check src e2e",
-    "check": "npm run lint && npm run typecheck && npm test && npm run test:e2e"
+    "lint": "biome check src test e2e",
+    "check": "npm run lint && npm run typecheck && npm test && npm run test:integration"
   }
 }

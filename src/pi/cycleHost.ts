@@ -1,11 +1,23 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { type Dirent, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { matchesKey } from "@earendil-works/pi-tui";
-import { type CycleConfig, type ModelChoice, parseCycleConfig } from "../core/cycleConfig.ts";
-import { cancelQuestion, takeoverQuestion } from "../core/cycleMessages.ts";
+import { type ControlSnapshot, createControlSnapshot } from "../core/controlSnapshot.ts";
+import {
+  type CycleConfig,
+  DEFAULT_PLANNER,
+  DEFAULT_REVIEWER,
+  type ModelChoice,
+  parseCycleConfig,
+} from "../core/cycleConfig.ts";
+import {
+  cancelQuestion,
+  modelUnavailableNote,
+  startedNote,
+  takeoverQuestion,
+} from "../core/cycleMessages.ts";
 import {
   configPath,
   cycleHistoryDir,
@@ -48,6 +60,7 @@ import {
 import {
   addOpenCycle,
   controlFs,
+  controlSnapshotPorts,
   ensureExcluded,
   fileLockStore,
   readGitAliases,
@@ -118,13 +131,24 @@ export const cycleHandles = createSessionRegistry<CycleHandle>();
 export type StartResult = { ok: true; cycleId: string } | { ok: false; message: string };
 export type TakeoverResult = { ok: true; handle: CycleHandle } | { ok: false; message: string };
 
+interface RoleModels {
+  planner: Model<Api>;
+  reviewer: Model<Api>;
+}
+
 interface CycleEnv {
+  snapshot: ControlSnapshot;
+  models: RoleModels;
   directory: string;
   gitRoot: string;
   cycleDir: string;
   config: CycleConfig;
   lease: Lease;
   repository: RepositoryPort;
+}
+
+interface LeaseTap {
+  snapshot?: ControlSnapshot;
 }
 
 const NO_USAGE: TokenUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -137,11 +161,48 @@ const gitRootOf = (directory: string): string | undefined =>
 export const projectHistory = (cwd: string, agentDir: string = getAgentDir()): string =>
   projectHistoryDir(agentDir, gitRootOf(cwd) ?? cwd);
 
-const asModel = (ctx: HostContext, choice: ModelChoice | undefined): Model<Api> | undefined =>
-  (choice ? ctx.modelRegistry.find(choice.provider, choice.id) : undefined) ?? ctx.model;
+export function resolveRoleModels(
+  ctx: HostContext,
+  config: CycleConfig,
+): { ok: true; models: RoleModels } | { ok: false; message: string } {
+  const roles: [string, ModelChoice][] = [
+    ["planner", config.planner ?? DEFAULT_PLANNER],
+    ["reviewer", config.reviewer ?? DEFAULT_REVIEWER],
+  ];
+  const found: Model<Api>[] = [];
+  for (const [role, choice] of roles) {
+    const model = ctx.modelRegistry.find(choice.provider, choice.id);
+    if (!model) {
+      return failure(
+        modelUnavailableNote(role, `${choice.provider}/${choice.id}`, config.language),
+      );
+    }
+    found.push(model);
+  }
+  const [planner, reviewer] = found as [Model<Api>, Model<Api>];
+  return { ok: true, models: { planner, reviewer } };
+}
 
-const modelName = (model: Model<Api> | undefined): string =>
-  model ? `${model.provider}/${model.id}` : "default";
+const modelName = (model: Model<Api>): string => `${model.provider}/${model.id}`;
+
+function recordTree(snapshot: ControlSnapshot, folder: string): void {
+  const files: string[] = [];
+  const walk = (current: string): void => {
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const path = join(current, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.isFile() && entry.name !== "progresso.md") files.push(path);
+    }
+  };
+  walk(folder);
+  snapshot.recordWrite(files);
+}
 
 export const cycleInputFiles = (directory: string, cycleDir: string): string[] => [
   join(cycleDir, VISION_FILE),
@@ -214,10 +275,7 @@ function buildPorts(
     piWeb: config.piWeb,
     gitAliases: readGitAliases(directory),
   });
-  const models = {
-    planner: asModel(ctx, config.planner),
-    reviewer: asModel(ctx, config.reviewer),
-  };
+  const { snapshot, models } = env;
   const modelFor = (role: "planner" | "reviewer") => models[role];
   return {
     cycleDir,
@@ -225,16 +283,20 @@ function buildPorts(
     inputFiles: cycleInputFiles(directory, cycleDir),
     files: {
       read: readText,
-      write: writeAtomic,
+      write: (path, text) => {
+        writeAtomic(path, text);
+        snapshot.recordWrite([path]);
+      },
       ensureDir: (path) => void mkdirSync(path, { recursive: true }),
     },
+    snapshot,
     control: controlFs(directory, gitRoot),
     workspace: repository.workspace(initial.cycleId),
     askCancelReason: () => askCancelReason(live, initial.language),
     runAgent: async (role, prompt, dir, progress, signal) => {
       const allowed =
         role === "planner" ? [planPath(cycleDir), progress] : [reviewPath(dir), progress];
-      const choice = role === "planner" ? config.planner : config.reviewer;
+      const choice = (role === "planner" ? config.planner : config.reviewer) ?? DEFAULT_PLANNER;
       let environment: StageEnvironment | undefined;
       try {
         environment = readStageEnvironment(env, initial, dir);
@@ -247,30 +309,47 @@ function buildPorts(
           usage: NO_USAGE,
         };
       }
-      return deps.runAgent({
-        cwd: directory,
-        prompt,
-        executionDir: dir,
-        model: modelFor(role),
-        thinking: choice?.thinking,
-        guard: (continuation) =>
-          childGuardFactory({
-            policy: { role, allowed },
-            shell,
-            epochStillMine: lease.epochStillMine,
-            progressPath: progress,
-            readFile: readText,
-            fixedText: prompt,
-            continuation,
-          }),
-        ...(environment ? { environment } : {}),
-        shellEnv: agentShellEnv(dir),
-        signal,
-      });
+      const isolatedDir = join(
+        deps.agentDir,
+        "ryker",
+        "isolado",
+        initial.cycleId,
+        relative(cycleDir, dir),
+      );
+      mkdirSync(isolatedDir, { recursive: true });
+      if (environment) recordTree(snapshot, stageEnvironmentDir(stageDirOfExecution(dir)));
+      try {
+        return await deps.runAgent({
+          cwd: directory,
+          prompt,
+          executionDir: dir,
+          model: modelFor(role),
+          thinking: choice?.thinking,
+          guard: (continuation) =>
+            childGuardFactory({
+              policy: { role, allowed },
+              shell,
+              epochStillMine: lease.epochStillMine,
+              progressPath: progress,
+              readFile: readText,
+              fixedText: prompt,
+              continuation,
+            }),
+          ...(environment ? { environment } : {}),
+          shellEnv: agentShellEnv(isolatedDir, [directory, cycleDir]),
+          signal,
+        });
+      } finally {
+        recordTree(snapshot, dir);
+        snapshot.recordWrite([planPath(cycleDir)]);
+      }
     },
     modelLabel: (role) => modelName(modelFor(role)),
     lease,
-    saveRecord: (saved) => writeAtomic(cycleRecordPath(directory), serializeCycleRecord(saved)),
+    saveRecord: (saved) => {
+      writeAtomic(cycleRecordPath(directory), serializeCycleRecord(saved));
+      snapshot.recordWrite([cycleRecordPath(directory)]);
+    },
     showView: (shown) => {
       const ui = live.current();
       if (!ui) return;
@@ -340,10 +419,14 @@ function buildHandle(
     } catch {}
   };
   timer = setInterval(() => {
-    if (env.lease.heartbeat()) return;
-    driver?.leaseLost();
-    clearView();
-    dispose();
+    try {
+      if (env.lease.heartbeat()) return;
+      driver?.leaseLost();
+      clearView();
+      dispose();
+    } catch (error) {
+      driver?.fail(error);
+    }
   }, deps.heartbeatMs);
   timer.unref();
   const ports = buildPorts(messenger, ctx, live, deps, env, initial, (closed) => {
@@ -383,6 +466,8 @@ export async function startStageTwo(
   if (!gitRoot) return failure(`${directory} is not inside a git repository`);
   const config = readConfig(directory);
   if (!config.ok) return config;
+  const resolved = resolveRoleModels(ctx, config.config);
+  if (!resolved.ok) return resolved;
   const repository = deps.repository(gitRoot);
   const finalBranch = repository.currentBranch();
   if (!finalBranch) {
@@ -392,6 +477,7 @@ export async function startStageTwo(
   const open = cyclesTouching(readOpenCycles(index), directory);
   if (open.length > 0) return failure(`repositório em outro ciclo: ${open[0]?.cycleId}`);
   const cycleId = createCycleId(new Date(deps.now()), state.pedido);
+  const tap: LeaseTap = {};
   const leased = acquireLease({
     store: fileLockStore,
     path: lockPath(gitRoot),
@@ -399,6 +485,7 @@ export async function startStageTwo(
     cycleId,
     now: deps.now,
     remove: removeFile,
+    onWrite: (path) => tap.snapshot?.recordWrite([path]),
   });
   if (!leased.ok) return failure(`the repository lock is not free (${leased.reason})`);
   ensureExcluded(gitRoot, ".pi/ryker");
@@ -416,6 +503,9 @@ export async function startStageTwo(
   mkdirSync(projectRykerDir(directory), { recursive: true });
   writeAtomic(cycleRecordPath(directory), serializeCycleRecord(record));
   addOpenCycle(index, { cycleId, ownerSession: sessionId, directories: [directory] });
+  const snapshot = createControlSnapshot(controlSnapshotPorts(directory, gitRoot, cycleDir));
+  snapshot.seed();
+  tap.snapshot = snapshot;
   const handle = buildHandle(messenger, ctx, deps, record, {
     directory,
     gitRoot,
@@ -423,8 +513,17 @@ export async function startStageTwo(
     config: config.config,
     lease: leased.lease,
     repository,
+    snapshot,
+    models: resolved.models,
   });
-  handle.running = handle.driver.run();
+  try {
+    messenger.sendMessage({
+      customType: "ryker-ciclo",
+      content: startedNote(record.language),
+      display: true,
+    });
+  } catch {}
+  handle.running = handle.driver.run().catch((error) => handle.driver.fail(error));
   return { ok: true, cycleId };
 }
 
@@ -450,9 +549,18 @@ function adoptCycle(
   loaded: { record: CycleRecord; gitRoot: string; config: CycleConfig },
   directory: string,
   lease: Lease,
-): CycleHandle {
+  tap: LeaseTap,
+): { ok: true; handle: CycleHandle } | { ok: false; message: string } {
   const sessionId = ctx.sessionManager.getSessionId();
+  const resolved = resolveRoleModels(ctx, loaded.config);
+  if (!resolved.ok) {
+    lease.release();
+    return resolved;
+  }
   const repository = deps.repository(loaded.gitRoot);
+  const cycleDir = cycleHistoryDir(deps.agentDir, loaded.gitRoot, loaded.record.cycleId);
+  const snapshot = createControlSnapshot(controlSnapshotPorts(directory, loaded.gitRoot, cycleDir));
+  const restored = snapshot.load();
   const { execution, ...withoutExecution } = loaded.record;
   if (execution) repository.workspace(loaded.record.cycleId).restore(execution.restorePoint);
   const cycle =
@@ -472,18 +580,26 @@ function adoptCycle(
     ownerSession: sessionId,
     directories: adopted.directories,
   });
-  return buildHandle(messenger, ctx, deps, adopted, {
-    directory,
-    gitRoot: loaded.gitRoot,
-    cycleDir: cycleHistoryDir(deps.agentDir, loaded.gitRoot, adopted.cycleId),
-    config: loaded.config,
-    lease,
-    repository,
-  });
+  if (restored) snapshot.recordWrite([cycleRecordPath(directory), lockPath(loaded.gitRoot)]);
+  else snapshot.seed();
+  tap.snapshot = snapshot;
+  return {
+    ok: true,
+    handle: buildHandle(messenger, ctx, deps, adopted, {
+      directory,
+      gitRoot: loaded.gitRoot,
+      cycleDir,
+      config: loaded.config,
+      lease,
+      repository,
+      snapshot,
+      models: resolved.models,
+    }),
+  };
 }
 
 const leaseFor =
-  (deps: HostDeps, sessionId: string, gitRoot: string, cycleId: string) =>
+  (deps: HostDeps, sessionId: string, gitRoot: string, cycleId: string, tap: LeaseTap) =>
   (confirmTakeover: boolean): LeaseResult =>
     acquireLease({
       store: fileLockStore,
@@ -492,6 +608,7 @@ const leaseFor =
       cycleId,
       now: deps.now,
       remove: removeFile,
+      onWrite: (path) => tap.snapshot?.recordWrite([path]),
       ...(confirmTakeover ? { confirmTakeover: true } : {}),
     });
 
@@ -505,9 +622,17 @@ export function attachExistingCycle(
   if (existing) return existing;
   const loaded = loadCycle(ctx.cwd);
   if (!loaded.ok || loaded.record.ownerSession !== sessionId) return undefined;
-  const leased = leaseFor(deps, sessionId, loaded.gitRoot, loaded.record.cycleId)(false);
+  const tap: LeaseTap = {};
+  const leased = leaseFor(deps, sessionId, loaded.gitRoot, loaded.record.cycleId, tap)(false);
   if (!leased.ok) return undefined;
-  return adoptCycle(messenger, ctx, deps, loaded, ctx.cwd, leased.lease);
+  const adopted = adoptCycle(messenger, ctx, deps, loaded, ctx.cwd, leased.lease, tap);
+  if (!adopted.ok) {
+    try {
+      ctx.ui.notify(adopted.message, "error");
+    } catch {}
+    return undefined;
+  }
+  return adopted.handle;
 }
 
 export async function takeOverCycle(
@@ -523,7 +648,8 @@ export async function takeOverCycle(
   const directory = entry.directories[0] ?? ctx.cwd;
   const loaded = loadCycle(directory);
   if (!loaded.ok) return loaded;
-  const lease = leaseFor(deps, sessionId, loaded.gitRoot, loaded.record.cycleId);
+  const tap: LeaseTap = {};
+  const lease = leaseFor(deps, sessionId, loaded.gitRoot, loaded.record.cycleId, tap);
   let leased = lease(false);
   if (!leased.ok && leased.reason === "otherAlive") {
     if (!ctx.hasUI || !ctx.ui.confirm) {
@@ -536,5 +662,5 @@ export async function takeOverCycle(
     leased = lease(true);
   }
   if (!leased.ok) return failure(`the repository lock could not be taken (${leased.reason})`);
-  return { ok: true, handle: adoptCycle(messenger, ctx, deps, loaded, directory, leased.lease) };
+  return adoptCycle(messenger, ctx, deps, loaded, directory, leased.lease, tap);
 }

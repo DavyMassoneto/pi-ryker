@@ -71,6 +71,9 @@ function fakeHandle(runState: "running" | "paused", calls: string[], language = 
         return { ok: true as const };
       },
       leaseLost: () => {},
+      fail: () => {},
+      back: () => ({ ok: true }),
+      end: () => ({ ok: true }),
     },
   };
 }

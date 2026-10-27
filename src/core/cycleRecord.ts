@@ -4,7 +4,7 @@ import type { RunState } from "./cycleStates.ts";
 import type { RestorePoint } from "./gitRefs.ts";
 import type { Usage } from "./tokens.ts";
 
-export type CycleClosure = "stageNotBuilt" | "backToDiscussion";
+export type CycleClosure = "stageNotBuilt" | "backToDiscussion" | "ended";
 
 export interface CycleRecord {
   version: 1;

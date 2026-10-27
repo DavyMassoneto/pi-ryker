@@ -1,18 +1,17 @@
 import { parseAgentStatus } from "../core/agentStatus.ts";
-import {
-  buildManifest,
-  diffManifests,
-  evaluateControlChange,
-  type Manifest,
-} from "../core/controlFiles.ts";
+import { buildManifest, diffManifests, evaluateControlChange } from "../core/controlFiles.ts";
+import type { ControlSnapshot as OutsideSnapshot } from "../core/controlSnapshot.ts";
 import { planHeadings } from "../core/coverage.ts";
-import { advance, type CycleEvent } from "../core/cycle.ts";
+import { advance, type CycleEvent, type CycleState, MAX_ROUNDS } from "../core/cycle.ts";
 import type { CycleConfig } from "../core/cycleConfig.ts";
 import {
   agentChangeNote,
+  errorNote,
+  exitsRequiredNote,
   leaseLostNote,
   leftoverProcessesNote,
   outsideChangeNote,
+  pauseSummary,
   stageSummary,
   workspaceChangeNote,
 } from "../core/cycleMessages.ts";
@@ -26,7 +25,7 @@ import {
   reviewPath,
   templatePath,
 } from "../core/cyclePaths.ts";
-import type { CycleRecord } from "../core/cycleRecord.ts";
+import type { CycleClosure, CycleRecord } from "../core/cycleRecord.ts";
 import { missingCoverage, parseReview } from "../core/findings.ts";
 import type { RestorePoint } from "../core/gitRefs.ts";
 import { validatePlan } from "../core/plan.ts";
@@ -60,6 +59,7 @@ export interface DriverPorts {
     write(path: string, text: string): void;
     ensureDir(path: string): void;
   };
+  snapshot: OutsideSnapshot;
   control: {
     snapshot(extraPaths: readonly string[]): ControlSnapshot;
     restore(before: ControlSnapshot, after: ControlSnapshot): void;
@@ -91,7 +91,12 @@ export interface StageDriver {
   requestPause(): void;
   resume(): Promise<{ ok: true } | { ok: false; reason: string }>;
   leaseLost(): void;
+  fail(error: unknown): void;
+  back(): ExitResult;
+  end(): ExitResult;
 }
+
+export type ExitResult = { ok: true } | { ok: false; reason: string };
 
 type StepOutcome = "continue" | "interrupted" | "halted";
 
@@ -103,19 +108,15 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
   let lost = false;
   let askAfterCancel = false;
   let controller: AbortController | undefined;
-  let lastManifest: Manifest | undefined;
-  let lastSnapshot: ControlSnapshot | undefined;
+  let suspended = false;
+  let pendingFailure: string | undefined;
   const language = ports.config.language ?? record.language;
   const noticeLanguage = language;
-
-  const refreshBaseline = (): void => {
-    lastSnapshot = ports.control.snapshot([]);
-    lastManifest = buildManifest(lastSnapshot);
-  };
 
   const halt = (): void => {
     lost = true;
     ports.notify(leaseLostNote(noticeLanguage), "warning");
+    if (!suspended) ports.announce(leaseLostNote(noticeLanguage));
   };
 
   const commit = (next: CycleRecord): boolean => {
@@ -126,7 +127,6 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
     record = next;
     ports.saveRecord(record);
     ports.showView(record);
-    refreshBaseline();
     return true;
   };
 
@@ -137,13 +137,14 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
 
   const enterPause = (extra: Partial<CycleRecord> = {}): void => {
     const phase = record.cycle.phase === "reviewing" ? "planning" : record.cycle.phase;
-    commit({
+    const paused = commit({
       ...withoutExecution(record),
       runState: "paused",
       cycle: { ...record.cycle, phase },
       ...extra,
     });
     if (extra.note) ports.notify(extra.note, "warning");
+    if (paused && !suspended) ports.announce(pauseSummary(record, extra.note));
   };
 
   const answerCancelQuestion = async (): Promise<boolean> => {
@@ -158,13 +159,14 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
 
   const summary = (): string => stageSummary(record, planPath(ports.cycleDir));
 
-  const closeCycle = (closed: "stageNotBuilt" | "backToDiscussion"): void => {
-    if (!commit({ ...record, runState: "paused", closed })) return;
+  const closeCycle = (closed: CycleClosure): boolean => {
+    if (!commit({ ...record, runState: "paused", closed })) return false;
     ports.announce(summary());
     ports.onClosed(record);
+    return true;
   };
 
-  const enterNextStage = (): void => closeCycle("stageNotBuilt");
+  const enterNextStage = (): void => void closeCycle("stageNotBuilt");
 
   const stopCycle = (): void => {
     if (!commit({ ...record, runState: "paused" })) return;
@@ -210,12 +212,11 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
     ports.files.ensureDir(dir);
     ports.files.write(templatePath(dir, "plan"), PLAN_TEMPLATE);
     ports.files.write(templatePath(dir, "review"), REVIEW_TEMPLATE);
-    const outside = lastManifest
-      ? diffManifests(lastManifest, buildManifest(ports.control.snapshot([])))
-      : undefined;
-    const outsideDecision = outside ? evaluateControlChange(outside, "outside") : undefined;
-    if (outsideDecision?.action === "stop") {
-      enterPause({ note: outsideChangeNote(outsideDecision.paths, noticeLanguage) });
+    const own = role === "planner" ? planPath(ports.cycleDir) : reviewPath(dir);
+    const outside = ports.snapshot.outsideChanges([own]);
+    if (outside.length > 0) {
+      ports.snapshot.restore(outside);
+      enterPause({ note: outsideChangeNote(outside, noticeLanguage) });
       return "outside";
     }
     const restorePoint = ports.workspace.capture(
@@ -282,10 +283,29 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
     );
   };
 
+  const earlierReviews = (): string[] => {
+    const found: string[] = [];
+    for (let attempt = 1; attempt <= record.attempt; attempt++) {
+      for (let round = 1; round <= MAX_ROUNDS; round++) {
+        if (attempt === record.attempt && round >= record.cycle.round) break;
+        const path = reviewPath(
+          executionDir(ports.cycleDir, {
+            attempt,
+            stage: record.cycle.stage,
+            round,
+            role: "reviewer",
+          }),
+        );
+        if ((ports.files.read(path) ?? "").trim() !== "") found.push(path);
+      }
+    }
+    return found;
+  };
+
   const plannerFiles = (): string[] => {
     const feedback = codeCheckFeedbackPath(ports.cycleDir);
     const hasFeedback = (ports.files.read(feedback) ?? "").trim() !== "";
-    return hasFeedback ? [...ports.inputFiles, feedback] : ports.inputFiles;
+    return [...ports.inputFiles, ...(hasFeedback ? [feedback] : []), ...earlierReviews()];
   };
 
   const commonValues = (dir: string) => ({
@@ -316,7 +336,9 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
     }
     const planText = ports.files.read(planFile);
     const checked =
-      planText === undefined ? undefined : validatePlan(planText, { owners: ports.config.owners });
+      planText === undefined
+        ? undefined
+        : validatePlan(planText, { owners: ports.config.owners, repositories: record.directories });
     const planValid = checked?.ok === true;
     recordFeedback(
       checked === undefined
@@ -338,7 +360,7 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
           language: language ?? "en",
           stage: record.cycle.stage,
           round: record.cycle.round,
-          files: [planFile, ...ports.inputFiles].join(", "),
+          files: [planFile, ...ports.inputFiles, ...earlierReviews()].join(", "),
           stageExtras: "the plan and the cycle configuration",
           stageChecks: STAGE_CHECKS[2],
           progressPath: progressPath(dir),
@@ -372,6 +394,32 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
   const isActivePhase = (): boolean =>
     record.cycle.phase === "planning" || record.cycle.phase === "reviewing";
 
+  const stopWithError = (error: string): void => {
+    const note = errorNote(error, noticeLanguage);
+    try {
+      if (record.execution) ports.workspace.restore(record.execution.restorePoint);
+    } catch {}
+    record = {
+      ...withoutExecution(record),
+      runState: "paused",
+      cycle: { ...record.cycle, phase: "stopped", stop: "error" },
+      note,
+    };
+    if (!lost) {
+      try {
+        ports.saveRecord(record);
+        ports.showView(record);
+      } catch {}
+    }
+    try {
+      ports.notify(note, "error");
+      ports.announce(summary());
+    } catch {}
+  };
+
+  const messageOf = (error: unknown): string =>
+    error instanceof Error ? error.message : String(error);
+
   const run = async (): Promise<void> => {
     if (looping || lost || record.closed) return;
     looping = true;
@@ -386,6 +434,11 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
         if (!ports.lease.epochStillMine()) return halt();
         const outcome =
           record.cycle.phase === "planning" ? await planningStep() : await reviewingStep();
+        if (pendingFailure !== undefined) {
+          stopWithError(pendingFailure);
+          pendingFailure = undefined;
+          return;
+        }
         if (outcome === "interrupted") {
           if (lost) return;
           const ask = askAfterCancel;
@@ -396,9 +449,43 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
         }
         if (outcome === "halted") return;
       }
+    } catch (error) {
+      stopWithError(messageOf(error));
     } finally {
       looping = false;
     }
+  };
+
+  const leave = (closed: "backToDiscussion" | "ended"): ExitResult => {
+    if (record.closed) return { ok: false, reason: "the cycle is already closed" };
+    if (record.runState !== "paused" || looping || executing) {
+      return { ok: false, reason: "the cycle must be paused first" };
+    }
+    const { stop: _stop, ...cycleRest } = record.cycle;
+    const { cancelQuestion: _asked, note: _note, ...rest } = record;
+    const cycle: CycleState =
+      closed === "backToDiscussion" ? { ...cycleRest, phase: "backToDiscussion" } : record.cycle;
+    try {
+      const closedNow = commit({ ...rest, cycle, runState: "paused", closed });
+      if (!closedNow) return { ok: false, reason: leaseLostNote(noticeLanguage) };
+      ports.announce(summary());
+      ports.onClosed(record);
+      return { ok: true };
+    } catch (error) {
+      stopWithError(messageOf(error));
+      return { ok: false, reason: messageOf(error) };
+    }
+  };
+
+  const reopenStopped = (): ExitResult => {
+    if (record.cycle.stop === "roundsExhausted") {
+      return { ok: false, reason: exitsRequiredNote(noticeLanguage) };
+    }
+    const { stop: _stop, ...cycleRest } = record.cycle;
+    const { note: _note, ...rest } = record;
+    return commit({ ...rest, cycle: { ...cycleRest, phase: "planning" } })
+      ? { ok: true }
+      : { ok: false, reason: leaseLostNote(noticeLanguage) };
   };
 
   return {
@@ -411,6 +498,7 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
       controller?.abort();
     },
     suspend: () => {
+      suspended = true;
       askAfterCancel = false;
       controller?.abort();
     },
@@ -422,18 +510,34 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
       controller?.abort();
       halt();
     },
+    fail: (error) => {
+      pendingFailure = messageOf(error);
+      controller?.abort();
+      if (!looping) {
+        stopWithError(pendingFailure);
+        pendingFailure = undefined;
+      }
+    },
+    back: () => leave("backToDiscussion"),
+    end: () => leave("ended"),
     resume: async () => {
       if (record.closed) return { ok: false, reason: "the cycle is already closed" };
       if (record.runState !== "paused") return { ok: false, reason: "the cycle is not paused" };
-      if (isStopped()) {
-        return { ok: false, reason: "the cycle stopped; only the user can decide what comes next" };
+      try {
+        if (isStopped()) {
+          const reopened = reopenStopped();
+          if (!reopened.ok) return reopened;
+        }
+        if (record.cancelQuestion && !(await answerCancelQuestion())) {
+          return { ok: false, reason: "answer whether the cancelled execution was stuck first" };
+        }
+        if (isStopped()) return { ok: true };
+        void run();
+        return { ok: true };
+      } catch (error) {
+        stopWithError(messageOf(error));
+        return { ok: false, reason: messageOf(error) };
       }
-      if (record.cancelQuestion && !(await answerCancelQuestion())) {
-        return { ok: false, reason: "answer whether the cancelled execution was stuck first" };
-      }
-      if (isStopped()) return { ok: true };
-      void run();
-      return { ok: true };
     },
   };
 }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
+import { createControlSnapshot } from "../core/controlSnapshot.ts";
 import { planHeadings } from "../core/coverage.ts";
 import type { AgentRole } from "../core/cyclePaths.ts";
 import { planPath, progressPath, reviewPath } from "../core/cyclePaths.ts";
@@ -20,7 +21,7 @@ const CONTROL = join("/p", ".pi", "ryker", "ciclo.json");
 
 const VALID_PLAN = `## Tasks
 ### T1
-- repository: .
+- repository: /p
 - owner: core
 - paths: src
 - tests: src/a.test.ts | npm test
@@ -104,6 +105,18 @@ function harness(script: Script): Harness {
     branch: "main",
     head: "h",
   });
+  let storedCopy: Record<string, string> | undefined;
+  const snapshot = createControlSnapshot({
+    listPaths: () => [CONTROL],
+    read: (path) => control.get(path),
+    write: (path, text) => void control.set(path, text),
+    remove: (path) => void control.delete(path),
+    loadCopy: () => storedCopy,
+    saveCopy: (copy) => {
+      storedCopy = copy;
+    },
+  });
+  snapshot.seed();
   let round = 1;
   const ports: DriverPorts = {
     cycleDir: CYCLE_DIR,
@@ -124,6 +137,7 @@ function harness(script: Script): Harness {
         for (const [path, text] of Object.entries(before)) control.set(path, text);
       },
     },
+    snapshot: snapshot,
     workspace: {
       capture: (label) => {
         workspace.captured.push(label);
@@ -555,4 +569,131 @@ test("driver: suspend (session closing) cancels without asking (U18.18)", async 
   await running;
   assert.equal(h.cancel.asked, 0);
   assert.equal(driver.record().runState, "paused");
+});
+
+const rejectingReviewer: Script = (role, dir, fs) => {
+  if (role === "planner") {
+    fs.set(planPath(CYCLE_DIR), VALID_PLAN);
+    return {};
+  }
+  fs.set(reviewPath(dir), review("REJECTED"));
+  fs.set(progressPath(dir), `## Coverage\n${planHeadings(VALID_PLAN).join("\n")}`);
+  return {};
+};
+
+test("driver: a plan task naming a repository outside the cycle fails the code check (B12)", async () => {
+  const h = harness((role, _dir, fs) => {
+    if (role === "planner")
+      fs.set(planPath(CYCLE_DIR), VALID_PLAN.replace("repository: /p", "repository: /elsewhere"));
+    return {};
+  });
+  const driver = createStageDriver(fresh(), h.ports);
+  await driver.run();
+  assert.equal(driver.record().cycle.phase, "stopped");
+  assert.equal(
+    h.prompts.every((p) => p.includes("planner")),
+    true,
+  );
+});
+
+test("driver: round 2 planner and reviewer receive the round 1 review (B7)", async () => {
+  const h = harness((role, dir, fs, round) => {
+    if (round === 2 && role === "reviewer") return writeApprovedReview(role, dir, fs, round);
+    return rejectingReviewer(role, dir, fs, round);
+  });
+  await createStageDriver(fresh(), h.ports).run();
+  assert.equal(h.prompts.length, 4);
+  assert.match(h.prompts[2] ?? "", /rodada-001[\\/]reviewer-01[\\/]revisao\.md/);
+  assert.match(h.prompts[3] ?? "", /rodada-001[\\/]reviewer-01[\\/]revisao\.md/);
+  assert.doesNotMatch(h.prompts[0] ?? "", /revisao\.md/);
+});
+
+test("driver: a stop by the user, a pause request and an outside change are announced (B13)", async () => {
+  const h = harness(() => ({ aborted: true }));
+  const driver = createStageDriver(fresh(), h.ports);
+  await driver.run();
+  assert.equal(h.announced.length, 1);
+  assert.match(h.announced[0] ?? "", /paused/);
+  assert.match(h.announced[0] ?? "", /\/ryker retomar/);
+});
+
+test("driver: a lost lease is announced (B13)", async () => {
+  const h = harness(writeApprovedReview);
+  const driver = createStageDriver(fresh(), h.ports);
+  h.lease.mine = false;
+  await driver.run();
+  assert.match(h.announced.join("\n"), /Another session took over/);
+});
+
+test("driver: a thrown error stops the cycle with the error and announces it (B9)", async () => {
+  const h = harness(writeApprovedReview);
+  h.ports.runAgent = async () => {
+    throw new Error("git commit-tree failed");
+  };
+  const driver = createStageDriver(fresh(), h.ports);
+  await driver.run();
+  assert.equal(driver.record().cycle.phase, "stopped");
+  assert.equal(driver.record().runState, "paused");
+  assert.match(driver.record().note ?? "", /git commit-tree failed/);
+  assert.match(h.announced.join("\n"), /git commit-tree failed/);
+});
+
+test("driver: a failing save while running does not reject (B9)", async () => {
+  const h = harness(writeApprovedReview);
+  let calls = 0;
+  const original = h.ports.saveRecord;
+  h.ports.saveRecord = (record) => {
+    calls += 1;
+    if (calls === 2) throw new Error("EPERM rename");
+    original(record);
+  };
+  const driver = createStageDriver(fresh(), h.ports);
+  await driver.run();
+  assert.match(h.announced.join("\n"), /EPERM rename/);
+});
+
+test("driver: a stopped cycle can be ended, which closes it and releases the lock and the index (B5)", async () => {
+  const h = harness(rejectingReviewer);
+  const driver = createStageDriver(fresh(), h.ports);
+  await driver.run();
+  assert.equal(driver.record().cycle.phase, "stopped");
+  assert.equal((await driver.resume()).ok, false);
+  assert.deepEqual(driver.end(), { ok: true });
+  assert.equal(driver.record().closed, "ended");
+  assert.equal(h.closed.length, 1);
+  assert.match(h.announced.at(-1) ?? "", /ended/);
+});
+
+test("driver: a stopped cycle can go back to the Discussion (B5)", async () => {
+  const h = harness(rejectingReviewer);
+  const driver = createStageDriver(fresh(), h.ports);
+  await driver.run();
+  assert.deepEqual(driver.back(), { ok: true });
+  assert.equal(driver.record().closed, "backToDiscussion");
+  assert.equal(driver.record().cycle.phase, "backToDiscussion");
+  assert.equal(h.closed.length, 1);
+});
+
+test("driver: back and end are refused while the cycle runs (B5)", async () => {
+  const h = harness(writeApprovedReview);
+  const driver = createStageDriver(fresh(), h.ports);
+  assert.equal(driver.end().ok, false);
+  assert.equal(driver.back().ok, false);
+});
+
+test("driver: BLOCKED stops without counting a round and resume retries the same round (U18.7)", async () => {
+  let blocked = true;
+  const h = harness((role, dir, fs, round) => {
+    if (role === "planner" && blocked) return { text: "STATUS: BLOCKED" };
+    return writeApprovedReview(role, dir, fs, round);
+  });
+  const driver = createStageDriver(fresh(), h.ports);
+  await driver.run();
+  assert.equal(driver.record().cycle.phase, "stopped");
+  assert.equal(driver.record().cycle.round, 1);
+  blocked = false;
+  assert.equal((await driver.resume()).ok, true);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(driver.record().cycle.round, 1);
+  assert.equal(driver.record().closed, "stageNotBuilt");
 });

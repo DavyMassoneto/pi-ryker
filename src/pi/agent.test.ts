@@ -6,8 +6,10 @@ import {
   type AgentRunRequest,
   type ChildSession,
   type ContinuationHooks,
+  environmentOverrides,
   runChildAgent,
 } from "./agent.ts";
+import type { StageEnvironment } from "./stageEnvironment.ts";
 
 const request = (signal: AbortSignal): AgentRunRequest => ({
   cwd: "/p",
@@ -164,4 +166,32 @@ test("agent: progress that no longer fits continues in a new session with the sa
   assert.equal(result.error, undefined);
   assert.equal(result.text, "STATUS: DONE");
   assert.deepEqual(result.usage, { input: 20, output: 2, cacheRead: 0, cacheWrite: 0 });
+});
+
+test("child resource overrides keep only final-branch skills and context files, never user or global ones", () => {
+  const environment: StageEnvironment = {
+    branch: "main",
+    gitRoot: "/repo",
+    contextFiles: [{ path: "/repo/AGENTS.md", content: "final branch" }],
+    skillFolders: [],
+    agentDefinitions: [],
+  };
+  const base = {
+    skills: [{ name: "superpowers", sourceInfo: { scope: "user" } }] as never,
+    diagnostics: [],
+  };
+  const baseAgents = {
+    agentsFiles: [
+      { path: "/home/u/.pi/agent/AGENTS.md", content: "global" },
+      { path: "/repo/AGENTS.md", content: "working tree" },
+    ],
+  };
+  for (const env of [environment, undefined]) {
+    const overrides = environmentOverrides(env);
+    assert.deepEqual(overrides.skillsOverride?.(base).skills, []);
+    assert.deepEqual(
+      overrides.agentsFilesOverride?.(baseAgents).agentsFiles,
+      env ? environment.contextFiles : [],
+    );
+  }
 });

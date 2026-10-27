@@ -1,4 +1,4 @@
-import { isAbsolute, join, relative } from "node:path";
+import { join } from "node:path";
 
 export const CONTEXT_FILE_NAMES = [
   "AGENTS.override.md",
@@ -13,10 +13,6 @@ const ENVIRONMENT_FOLDERS = [".pi/skills/", ".agents/skills/", ".pi/agents/"];
 export interface ContextFile {
   path: string;
   content: string;
-}
-
-export interface ScopedSkill {
-  sourceInfo: { scope: string };
 }
 
 const lastSegment = (path: string): string => path.split("/").pop() ?? path;
@@ -53,26 +49,6 @@ export function skillFoldersFor(cwdRelative: string): string[] {
     .reverse()
     .map((folder) => inFolder(folder, ".agents/skills"));
   return [inFolder(cwdRelative, ".pi/skills"), ...agentsFolders];
-}
-
-export function isInside(root: string, path: string): boolean {
-  const rel = relative(root, path);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
-export function replaceProjectContextFiles(
-  base: readonly ContextFile[],
-  projectRoot: string,
-  fromFinalBranch: readonly ContextFile[],
-): ContextFile[] {
-  return [...base.filter((file) => !isInside(projectRoot, file.path)), ...fromFinalBranch];
-}
-
-export function replaceProjectSkills<T extends ScopedSkill>(
-  base: readonly T[],
-  fromFinalBranch: readonly T[],
-): T[] {
-  return [...base.filter((skill) => skill.sourceInfo.scope !== "project"), ...fromFinalBranch];
 }
 
 export const stageEnvironmentDir = (stageDir: string): string => join(stageDir, "ambiente");

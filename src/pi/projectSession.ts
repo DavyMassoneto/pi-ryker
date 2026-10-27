@@ -11,6 +11,7 @@ import { buildOwnerNotice } from "../core/prompts.ts";
 import type { SessionRole } from "../core/session.ts";
 import { createSessionRegistry } from "../core/sessionRegistry.ts";
 import type { ShellContext } from "../core/shielding.ts";
+import { readRunningPiWebs } from "./childGuard.ts";
 import {
   attachExistingCycle,
   cycleHandles,
@@ -56,6 +57,7 @@ function shellContext(cwd: string): ShellContext {
     allowedRoots: [],
     homeDir: homedir(),
     piWeb: parsed?.ok ? parsed.config.piWeb : undefined,
+    piWebRuns: readRunningPiWebs(),
     gitAliases: readGitAliases(cwd),
   };
 }

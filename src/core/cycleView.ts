@@ -1,4 +1,5 @@
 import { MAX_ROUNDS } from "./cycle.ts";
+import { stopHint } from "./cycleMessages.ts";
 import type { CycleRecord } from "./cycleRecord.ts";
 import {
   formatTokens,
@@ -39,6 +40,7 @@ function stageTwoRow(record: CycleRecord): StageRow {
 const CLOSURE_LABELS = {
   stageNotBuilt: { pt: "etapa 3 indisponível", en: "stage 3 not available" },
   backToDiscussion: { pt: "voltou à Discussão", en: "back to Discussion" },
+  ended: { pt: "encerrado", en: "ended" },
 } as const;
 
 const closureLabel = (record: CycleRecord): string | undefined =>
@@ -75,7 +77,7 @@ export function ownerWidget(record: CycleRecord): string[] {
     return { status: "pending" };
   });
   const stateLabel = closureLabel(record);
-  return widgetLines({
+  const lines = widgetLines({
     cycleId: record.cycleId,
     repositories: record.directories.length,
     state: record.runState,
@@ -83,4 +85,5 @@ export function ownerWidget(record: CycleRecord): string[] {
     stages: rows,
     ...(record.language ? { language: record.language } : {}),
   });
+  return record.runState === "running" ? [...lines, stopHint(record.language)] : lines;
 }

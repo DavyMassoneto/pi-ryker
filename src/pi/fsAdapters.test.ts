@@ -6,6 +6,7 @@ import { test } from "node:test";
 import {
   addOpenCycle,
   controlFs,
+  controlSnapshotPorts,
   ensureExcluded,
   fileLockStore,
   readOpenCycles,
@@ -60,6 +61,35 @@ test("fs: restore undoes edits, removals and additions of control files (P5)", (
   control.restore(before, after);
   assert.deepEqual(control.snapshot([]), before);
   assert.equal(readFileSync(join(root, ".git", "config"), "utf8"), "[core]\n");
+  rmSync(root, { recursive: true });
+});
+
+test("fs: control snapshot ports cover trava.json and the cycle folder, not progress or the copy", () => {
+  const root = repository();
+  const cycleDir = join(root, "history", "cycle");
+  mkdirSync(join(cycleDir, "tentativa-001", "etapa-2"), { recursive: true });
+  writeFileSync(join(cycleDir, "plano.md"), "plan");
+  writeFileSync(join(cycleDir, "tentativa-001", "etapa-2", "progresso.md"), "progress");
+  writeFileSync(join(root, ".pi", "ryker", "trava.json"), "{}");
+  const ports = controlSnapshotPorts(root, root, cycleDir);
+  const names = ports.listPaths().map((path) => path.slice(root.length + 1).replaceAll("\\", "/"));
+  assert.ok(names.includes(".pi/ryker/trava.json"));
+  assert.ok(names.includes("history/cycle/plano.md"));
+  assert.ok(!names.some((name) => name.endsWith("progresso.md")));
+  ports.saveCopy({ a: "1" });
+  assert.deepEqual(ports.loadCopy(), { a: "1" });
+  assert.ok(!ports.listPaths().some((path) => path.includes("controle")));
+  rmSync(root, { recursive: true });
+});
+
+test("fs: control snapshot ports return undefined for a missing or corrupt copy", () => {
+  const root = repository();
+  const cycleDir = join(root, "history", "cycle");
+  const ports = controlSnapshotPorts(root, root, cycleDir);
+  assert.equal(ports.loadCopy(), undefined);
+  mkdirSync(join(cycleDir, "controle"), { recursive: true });
+  writeFileSync(join(cycleDir, "controle", "controle.json"), "not json");
+  assert.equal(ports.loadCopy(), undefined);
   rmSync(root, { recursive: true });
 });
 

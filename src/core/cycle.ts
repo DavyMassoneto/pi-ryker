@@ -1,7 +1,7 @@
 export const MAX_ROUNDS = 2;
 
 export type CyclePhase = "planning" | "reviewing" | "approved" | "stopped" | "backToDiscussion";
-export type StopReason = "roundsExhausted" | "blocked";
+export type StopReason = "roundsExhausted" | "blocked" | "error";
 
 export interface CycleState {
   stage: number;

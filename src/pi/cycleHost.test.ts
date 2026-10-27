@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import { parseCycleRecord } from "../core/cycleRecord.ts";
 import type { RestorePoint } from "../core/gitRefs.ts";
 import { lockPath } from "../core/lock.ts";
@@ -61,7 +62,9 @@ function fakeRepository(
   };
 }
 
-function fixture(options: { git?: boolean; config?: boolean; sessionId?: string } = {}): Fixture {
+function fixture(
+  options: { git?: boolean; config?: boolean; sessionId?: string; noModels?: boolean } = {},
+): Fixture {
   const root = mkdtempSync(join(tmpdir(), "ryker-host-"));
   const project = join(root, "project");
   const agentDir = join(root, "agent");
@@ -111,7 +114,9 @@ function fixture(options: { git?: boolean; config?: boolean; sessionId?: string 
       getSessionId: () => options.sessionId ?? "session-a",
       getSessionFile: () => undefined,
     },
-    modelRegistry: { find: () => undefined },
+    modelRegistry: {
+      find: (provider, id) => (options.noModels ? undefined : ({ provider, id } as Model<Api>)),
+    },
   };
   return {
     project,
@@ -178,7 +183,10 @@ test("host: starting takes the lock, indexes the cycle, shows status and runs th
   assert.match(f.status.get("ryker") ?? "", /^Ryker · 2\/6 Planning/);
   assert.equal(f.requests.length > 0, true);
   assert.equal(f.requests[0]?.cwd, f.project);
-  assert.equal(f.requests[0]?.shellEnv.PI_CODING_AGENT_DIR, f.requests[0]?.executionDir);
+  assert.match(f.requests[0]?.shellEnv.PI_CODING_AGENT_DIR ?? "", /ryker[\\/]isolado/);
+  assert.equal(f.requests[0]?.model?.id, "cc/claude-opus-5-5");
+  assert.equal(f.requests[0]?.thinking, "high");
+  assert.match(f.messages[0] ?? "", /\/ryker parar/);
   assert.match(readFileSync(join(f.project, ".git", "info", "exclude"), "utf8"), /\.pi\/ryker/);
   await handle.shutdown();
   f.cleanup();
@@ -421,5 +429,30 @@ test("host: taking over without a dialog is refused while the owner is alive (P3
   liveForeignCycle(f);
   const result = await takeOverCycle(f.messenger, { ...f.ctx, hasUI: false }, f.deps);
   assert.match(result.ok ? "" : result.message, /confirmation/);
+  f.cleanup();
+});
+
+test("host: a role model that is not found stops with a visible reason and starts nothing (Q13, B1)", async () => {
+  const f = fixture({ noModels: true });
+  const result = await startStageTwo(f.messenger, f.ctx, discussion(), f.deps);
+  assert.equal(result.ok, false);
+  assert.match(result.ok ? "" : result.message, /omni\/cc\/claude-opus-5-5/);
+  assert.equal(existsSync(join(f.project, ".pi", "ryker", "trava.json")), false);
+  assert.equal(f.requests.length, 0);
+  f.cleanup();
+});
+
+test("host: a thrown agent error does not reject and stops the cycle with the error (B9)", async () => {
+  const f = fixture();
+  f.deps.runAgent = async () => {
+    throw new Error("EBUSY rename");
+  };
+  const result = await startStageTwo(f.messenger, f.ctx, discussion(), f.deps);
+  assert.equal(result.ok, true);
+  const handle = cycleHandles.get("session-a");
+  await handle?.running;
+  assert.equal(handle?.driver.record().cycle.phase, "stopped");
+  assert.match(f.messages.join("\n"), /EBUSY rename/);
+  await handle?.shutdown();
   f.cleanup();
 });

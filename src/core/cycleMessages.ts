@@ -6,7 +6,38 @@ import { grandTotal } from "./tokens.ts";
 const STOP_REASONS = {
   roundsExhausted: { pt: "as 2 rodadas foram usadas", en: "both rounds were used" },
   blocked: { pt: "o agente reportou BLOCKED", en: "the agent reported BLOCKED" },
+  error: { pt: "ocorreu um erro", en: "an error occurred" },
 } as const;
+
+export function stopHint(language?: string): string {
+  return isPortuguese(language)
+    ? "Para interromper uma execução use /ryker parar; o botão Stop do pi-web não pausa o ciclo."
+    : "To interrupt a running execution use /ryker parar; the pi-web Stop button does not pause the cycle.";
+}
+
+function exitsText(language?: string): string {
+  return isPortuguese(language)
+    ? "Continue com /ryker retomar, volte para a Discussão com /ryker voltar ou encerre com /ryker encerrar."
+    : "Continue with /ryker retomar, go back to the Discussion with /ryker voltar or end with /ryker encerrar.";
+}
+
+export function exitsRequiredNote(language?: string): string {
+  return isPortuguese(language)
+    ? "As 2 rodadas foram usadas: escolha /ryker voltar (volta para a Discussão) ou /ryker encerrar."
+    : "Both rounds were used: choose /ryker voltar (back to the Discussion) or /ryker encerrar.";
+}
+
+export function errorNote(error: string, language?: string): string {
+  return isPortuguese(language)
+    ? `Erro no driver do ciclo: ${error}. O ciclo parou.`
+    : `Cycle driver error: ${error}. The cycle stopped.`;
+}
+
+export function pauseSummary(record: CycleRecord, note?: string): string {
+  const pt = isPortuguese(record.language);
+  const head = pt ? "Ryker: ciclo pausado" : "Ryker: cycle paused";
+  return `${head}${note ? `: ${note}` : "."} ${exitsText(record.language)} ${stopHint(record.language)}`;
+}
 
 export function stageSummary(record: CycleRecord, planFile: string): string {
   const pt = isPortuguese(record.language);
@@ -23,10 +54,20 @@ export function stageSummary(record: CycleRecord, planFile: string): string {
       ? `Ryker: etapa 2 (${stage}) voltou para a Discussão na rodada ${round}, ${tokens} tokens.`
       : `Ryker: stage 2 (${stage}) went back to the Discussion in round ${round}, ${tokens} tokens.`;
   }
+  if (record.closed === "ended") {
+    return pt
+      ? `Ryker: ciclo encerrado na etapa 2 (${stage}), ${tokens} tokens. A trava foi liberada.`
+      : `Ryker: cycle ended at stage 2 (${stage}), ${tokens} tokens. The lock was released.`;
+  }
   const reason = record.cycle.stop ? STOP_REASONS[record.cycle.stop][pt ? "pt" : "en"] : "";
+  const detail = record.note ? ` ${record.note}` : "";
+  const next =
+    record.cycle.stop === "roundsExhausted"
+      ? exitsRequiredNote(record.language)
+      : exitsText(record.language);
   return pt
-    ? `Ryker: etapa 2 (${stage}) parou: ${reason}. ${tokens} tokens. /ryker retomar não se aplica; o ciclo espera a decisão do usuário.`
-    : `Ryker: stage 2 (${stage}) stopped: ${reason}. ${tokens} tokens. /ryker retomar does not apply; the cycle waits for the user.`;
+    ? `Ryker: etapa 2 (${stage}) parou: ${reason}.${detail} ${tokens} tokens. ${next} ${stopHint(record.language)}`
+    : `Ryker: stage 2 (${stage}) stopped: ${reason}.${detail} ${tokens} tokens. ${next} ${stopHint(record.language)}`;
 }
 
 export function outsideChangeNote(paths: readonly string[], language?: string): string {
@@ -99,7 +140,10 @@ export type CommandReply =
   | "resumed"
   | "noCycle"
   | "readerOnly"
-  | "tookOver";
+  | "tookOver"
+  | "backToDiscussion"
+  | "ended"
+  | "notAvailable";
 
 const COMMAND_REPLIES: Record<CommandReply, { pt: string; en: string }> = {
   stopping: {
@@ -122,6 +166,18 @@ const COMMAND_REPLIES: Record<CommandReply, { pt: string; en: string }> = {
     pt: "Este ciclo pertence a outra sessão; aqui só é possível ver o status ou assumir com /ryker retomar.",
     en: "This cycle belongs to another session; here you can only see its status or take it over with /ryker retomar.",
   },
+  backToDiscussion: {
+    pt: "O ciclo voltou para a Discussão; a trava foi liberada.",
+    en: "The cycle went back to the Discussion; the lock was released.",
+  },
+  ended: {
+    pt: "Ciclo encerrado; a trava foi liberada.",
+    en: "Cycle ended; the lock was released.",
+  },
+  notAvailable: {
+    pt: "Este subcomando não está disponível nesta versão.",
+    en: "This subcommand is not available in this version.",
+  },
   tookOver: {
     pt: "Ciclo assumido por esta sessão; a execução da sessão anterior foi descartada sem contar rodada.",
     en: "This session took the cycle over; the previous session's execution was discarded without counting a round.",
@@ -130,3 +186,35 @@ const COMMAND_REPLIES: Record<CommandReply, { pt: string; en: string }> = {
 
 export const commandReply = (kind: CommandReply, language?: string): string =>
   COMMAND_REPLIES[kind][isPortuguese(language) ? "pt" : "en"];
+
+export function openCycleRefusal(
+  runState: string | undefined,
+  role: "owner" | "reader",
+  language?: string,
+): string {
+  const pt = isPortuguese(language);
+  const head = pt
+    ? "Há um ciclo do Ryker aberto neste projeto: não abro outra Discussão."
+    : "A Ryker cycle is open in this project: no new Discussion is started.";
+  if (role === "reader") {
+    return `${head} ${commandReply("readerOnly", language)}`;
+  }
+  if (runState === "running") {
+    return pt
+      ? `${head} Saídas: /ryker parar ou /ryker pausar.`
+      : `${head} Exits: /ryker parar or /ryker pausar.`;
+  }
+  return `${head} ${exitsText(language)}`;
+}
+
+export function modelUnavailableNote(role: string, model: string, language?: string): string {
+  return isPortuguese(language)
+    ? `Modelo indisponível para o papel ${role}: ${model} não foi encontrado. O ciclo não começou e nenhum outro modelo foi usado no lugar.`
+    : `Model unavailable for the ${role} role: ${model} was not found. The cycle did not start and no other model was used instead.`;
+}
+
+export function startedNote(language?: string): string {
+  return isPortuguese(language)
+    ? `Ryker: ciclo iniciado na etapa 2 (Planejamento). ${stopHint(language)}`
+    : `Ryker: cycle started at stage 2 (Planning). ${stopHint(language)}`;
+}

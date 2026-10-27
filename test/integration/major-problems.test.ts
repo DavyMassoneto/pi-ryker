@@ -3,12 +3,12 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { cancelQuestion } from "../src/core/cycleMessages.ts";
-import { codeCheckFeedbackPath, planPath } from "../src/core/cyclePaths.ts";
-import { type CycleRecord, parseCycleRecord } from "../src/core/cycleRecord.ts";
-import ryker from "../src/index.ts";
-import { runCycleCommand } from "../src/pi/cycleCommands.ts";
-import { type CycleHandle, cycleHandles, startStageTwo } from "../src/pi/cycleHost.ts";
+import { cancelQuestion } from "../../src/core/cycleMessages.ts";
+import { codeCheckFeedbackPath, planPath } from "../../src/core/cyclePaths.ts";
+import { type CycleRecord, parseCycleRecord } from "../../src/core/cycleRecord.ts";
+import ryker from "../../src/index.ts";
+import { runCycleCommand } from "../../src/pi/cycleCommands.ts";
+import { type CycleHandle, cycleHandles, startStageTwo } from "../../src/pi/cycleHost.ts";
 import {
   abortable,
   approvedDiscussion,
@@ -23,7 +23,7 @@ import {
   fakeSession,
   probeChildGuard,
   until,
-  VALID_PLAN,
+  validPlan,
   type World,
 } from "./harness.ts";
 
@@ -201,7 +201,7 @@ test("major problem: tampered control files are restored and the round fails", a
       appendFileSync(config, '[remote "origin"]\n\turl = https://example.invalid/x.git\n');
       mkdirSync(join(gitDir, "hooks"), { recursive: true });
       writeFileSync(hook, "#!/bin/sh\nexit 0\n");
-      writeFileSync(planPath(cycleDirOfRequest(request)), VALID_PLAN);
+      writeFileSync(planPath(cycleDirOfRequest(request)), validPlan(request.cwd));
       return {};
     });
     await handle.running;
@@ -252,7 +252,7 @@ test("major problem: a child git push and edits of .git or auth paths are refuse
       });
       decisions.ownFile = await guard.call("write", {
         path: planPath(cycleDirOfRequest(request)),
-        content: VALID_PLAN,
+        content: validPlan(request.cwd),
       });
       return {};
     });
@@ -285,7 +285,7 @@ test("major problem: a failed plan check feeds verificacao-codigo.md into the ne
         return {};
       }
       feedbackSeenByRoundTwo = readFileSync(codeCheckFeedbackPath(cycleDir), "utf8");
-      writeFileSync(planPath(cycleDir), VALID_PLAN);
+      writeFileSync(planPath(cycleDir), validPlan(request.cwd));
       return {};
     });
     await handle.running;
@@ -321,6 +321,29 @@ test("major problem: a stale ctx after a session switch does not crash the drive
     assert.equal(record.cancelQuestion, true);
     assert.equal(record.closed, undefined);
     await handle.shutdown();
+    assert.equal(cycleHandles.has("session-main"), false);
+  } finally {
+    s.world.cleanup();
+  }
+});
+
+test("major problem: a cycle config naming an unknown model stops visibly", async () => {
+  const s = scenario();
+  const session = fakeSession(s.world, "session-main");
+  try {
+    writeFileSync(
+      join(s.world.project, ".pi", "ryker", "config.json"),
+      JSON.stringify({
+        language: "en",
+        owners: ["core"],
+        planner: { provider: "nowhere", id: "ghost-model" },
+      }),
+    );
+    const runtime = fakeRuntime(s.world, (request) => abortable(request));
+    const started = await startStageTwo(s.pi.api, session.ctx, approvedDiscussion(), runtime.deps);
+    assert.equal(started.ok, false);
+    assert.match(String(started.message), /Model unavailable for the planner role/);
+    assert.match(String(started.message), /nowhere\/ghost-model/);
     assert.equal(cycleHandles.has("session-main"), false);
   } finally {
     s.world.cleanup();

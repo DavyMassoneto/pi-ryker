@@ -35,7 +35,7 @@ What F1a could not do the way the design asks, why, and what the code does inste
 
 ## Restore points (Mec9, C13.2) and branch/HEAD check (P6, Mec7)
 
-- `git commit-tree` needs the user's git identity; without `user.name` and `user.email` the restore point fails and the run reports the error.
+- `git commit-tree` needs the user's git identity; without `user.name` and `user.email` the restore point fails; the driver catches the error, stops the cycle (state stopped, the error in the record) and announces it in the conversation. `/ryker retomar` retries after the identity is set.
 - Restoring puts back the branch ref, HEAD, every non-ignored file and the index as it was. Ignored files created during the run are left in place (Q "Registra e não apaga").
 - Stage 2 starts only on a checked-out branch with at least one commit; a detached HEAD is refused.
 

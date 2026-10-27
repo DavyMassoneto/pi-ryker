@@ -12,5 +12,5 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
-  "include": ["src", "e2e"]
+  "include": ["src", "test", "e2e"]
 }
