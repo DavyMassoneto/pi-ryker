@@ -1,38 +1,38 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { criarEstado, type Estado } from "./estado.ts";
-import { registrarResposta } from "./perguntas.ts";
-import { textoStatus } from "./status.ts";
+import { recordAnswer } from "./questions.ts";
+import { createState, type DiscussionState } from "./state.ts";
+import { statusText } from "./status.ts";
 
-const AGORA = "2026-10-23T10:00:00.000Z";
-const novo = (): Estado =>
-  criarEstado({ pedido: "p", idioma: "pt", agora: AGORA, anterior: { ferramentas: [] } });
-const resp = (e: Estado, tema: string): Estado =>
-  registrarResposta(
+const NOW = "2026-10-23T10:00:00.000Z";
+const added = (): DiscussionState =>
+  createState({ request: "p", language: "pt", now: NOW, previous: { ferramentas: [] } });
+const answer = (e: DiscussionState, topic: string): DiscussionState =>
+  recordAnswer(
     e,
-    { tema, pergunta: "P?", opcoes: ["a", "b"], recomendada: 0 },
+    { tema: topic, pergunta: "P?", opcoes: ["a", "b"], recomendada: 0 },
     "a",
     false,
-    AGORA,
+    NOW,
   );
 
-test("status: contador de perguntas e temas abertos", () => {
-  let e = novo();
-  assert.equal(textoStatus(e), "Discussão: 0 perguntas · 10 temas abertos");
-  e = resp(resp(e, "resultado"), "apetite");
-  assert.equal(textoStatus(e), "Discussão: 2 perguntas · 8 temas abertos");
+test("status: question and open topic counter", () => {
+  let e = added();
+  assert.equal(statusText(e), "Discussão: 0 perguntas · 10 temas abertos");
+  e = answer(answer(e, "resultado"), "apetite");
+  assert.equal(statusText(e), "Discussão: 2 perguntas · 8 temas abertos");
 });
 
-test("status: singular e pausada", () => {
-  let e = novo();
-  for (const t of e.temas.slice(1).map((x) => x.id)) e = resp(e, t);
-  assert.equal(textoStatus(e), "Discussão: 9 perguntas · 1 tema aberto");
+test("status: singular and paused", () => {
+  let e = added();
+  for (const t of e.temas.slice(1).map((x) => x.id)) e = answer(e, t);
+  assert.equal(statusText(e), "Discussão: 9 perguntas · 1 tema aberto");
   e.pausado = true;
-  assert.match(textoStatus(e), /pausada$/);
+  assert.match(statusText(e), /pausada$/);
 });
 
-test("status em inglês", () => {
-  const e = novo();
+test("status in English", () => {
+  const e = added();
   e.idioma = "en";
-  assert.equal(textoStatus(e), "Discussion: 0 questions · 10 open topics");
+  assert.equal(statusText(e), "Discussion: 0 questions · 10 open topics");
 });

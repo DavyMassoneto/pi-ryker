@@ -1,85 +1,85 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { criarEstado } from "./estado.ts";
-import { registrarResposta } from "./perguntas.ts";
-import { secaoPrompt, secaoPromptPosAprovacao } from "./prompt.ts";
+import { postApprovalPromptSection, promptSection } from "./prompt.ts";
+import { recordAnswer } from "./questions.ts";
+import { createState } from "./state.ts";
 
-const AGORA = "2026-10-23T10:00:00.000Z";
-const novoSemIdioma = () =>
-  criarEstado({ pedido: "Quero uma CLI", agora: AGORA, anterior: { ferramentas: [] } });
-const novo = () =>
-  criarEstado({
-    pedido: "Quero uma CLI",
-    idioma: "pt",
-    agora: AGORA,
-    anterior: { ferramentas: [] },
+const NOW = "2026-10-23T10:00:00.000Z";
+const newWithoutLanguage = () =>
+  createState({ request: "Quero uma CLI", now: NOW, previous: { ferramentas: [] } });
+const added = () =>
+  createState({
+    request: "Quero uma CLI",
+    language: "pt",
+    now: NOW,
+    previous: { ferramentas: [] },
   });
 
-test("secaoPrompt: teste de macro, proibição de texto, ordem de leitura", () => {
-  const s = secaoPrompt(novo());
+test("promptSection: macro test, text prohibition, reading order", () => {
+  const s = promptSection(added());
   assert.match(s, /muda o escopo/);
   assert.match(s, /padrão razoável/);
   assert.match(s, /nunca em texto/i);
   assert.match(s, /ryker_perguntar/);
   assert.match(s, /ask_user_question/);
   assert.match(s, /idioma do usuário/);
-  const ordem = ["o pedido", "docs", "decisões existentes", "código"].map((x) => s.indexOf(x));
+  const order = ["o pedido", "docs", "decisões existentes", "código"].map((x) => s.indexOf(x));
   assert.ok(
-    ordem.every((i) => i >= 0),
-    `ordem: ${ordem}`,
+    order.every((i) => i >= 0),
+    `ordem: ${order}`,
   );
   assert.deepEqual(
-    [...ordem].sort((a, b) => a - b),
-    ordem,
+    [...order].sort((a, b) => a - b),
+    order,
   );
 });
 
-test("secaoPrompt: snapshot dos temas com status e o pedido", () => {
-  const e = registrarResposta(
-    novo(),
+test("promptSection: topics snapshot with status and the request", () => {
+  const e = recordAnswer(
+    added(),
     { tema: "resultado", pergunta: "O que?", opcoes: ["a", "b"], recomendada: 0 },
     "a",
     false,
-    AGORA,
+    NOW,
   );
-  const s = secaoPrompt(e);
+  const s = promptSection(e);
   assert.match(s, /Quero uma CLI/);
   assert.match(s, /resultado.*decidido/);
   assert.match(s, /apetite.*aberto/);
   assert.match(s, /problema-job.*aberto/);
 });
 
-test("secaoPrompt: sínteses 1-8 cobrem só o decidido; suposições na 9 e adiados na 10", () => {
-  const s = secaoPrompt(novo());
+test("promptSection: syntheses 1-8 cover only what is decided; assumptions in 9 and deferred in 10", () => {
+  const s = promptSection(added());
   assert.match(s, /só o que foi decidido/);
   assert.match(s, /seção 9/);
   assert.match(s, /seção 10/);
 });
 
-test("secaoPrompt: só achado que exige decisão macro vira pergunta; suposição pode ser reescrita", () => {
-  const s = secaoPrompt(novo());
+test("promptSection: only a finding that requires a macro decision becomes a question; assumption can be rewritten", () => {
+  const s = promptSection(added());
   assert.match(s, /NÃO exige decisão macro: nunca pergunte/);
   assert.match(s, /suposicao/);
   assert.match(s, /ação supor num tema já suposto/);
 });
 
-test("secaoPromptPosAprovacao: usuário não é perguntado e segue a visão", () => {
-  const s = secaoPromptPosAprovacao();
+test("postApprovalPromptSection: user is not asked and follows the vision", () => {
+  const s = postApprovalPromptSection();
   assert.match(s, /não é perguntado/);
   assert.match(s, /visão descreve/);
 });
 
-test("secaoPrompt: sem idioma exige 'idioma' na primeira chamada; com idioma manda mantê-lo", () => {
-  const sem = secaoPrompt(novoSemIdioma());
-  assert.match(sem, /ainda não está registrado/);
-  assert.match(sem, /PRIMEIRA chamada/);
-  const com = secaoPrompt({ ...novoSemIdioma(), idioma: "pt-BR" });
-  assert.match(com, /"pt-BR"/);
-  assert.match(com, /Continue usando esse idioma/);
+test("promptSection: without language requires 'idioma' on the first call; with language asks to keep it", () => {
+  const without = promptSection(newWithoutLanguage());
+  assert.match(without, /ainda não está registrado/);
+  assert.match(without, /PRIMEIRA chamada/);
+  const withLanguage = promptSection({ ...newWithoutLanguage(), idioma: "pt-BR" });
+  assert.match(withLanguage, /"pt-BR"/);
+  assert.match(withLanguage, /Continue usando esse idioma/);
 });
 
-test("secaoPrompt: fila por impacto × incerteza", () => {
-  const s = secaoPrompt(novo());
+test("promptSection: queue by impact × uncertainty", () => {
+  const s = promptSection(added());
   assert.match(s, /impacto × incerteza/);
   assert.match(s, /do maior para o menor/);
   assert.match(s, /até 4 por chamada de ryker_perguntar/);
