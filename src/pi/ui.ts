@@ -1,62 +1,57 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { Estado } from "../core/estado.ts";
-import { rotulos } from "../core/i18n.ts";
+import { labels } from "../core/i18n.ts";
 import {
-  interpretarEscolha,
-  opcoesDoSelect,
-  type PerguntaEntrada,
-  pausar,
-  registrarResposta,
-} from "../core/perguntas.ts";
+  interpretChoice,
+  pause,
+  type QuestionInput,
+  recordAnswer,
+  selectOptions,
+} from "../core/questions.ts";
+import type { DiscussionState } from "../core/state.ts";
 
-export interface ResultadoLote {
-  estado: Estado;
-  /** Respostas dadas nesta chamada, na ordem. */
-  respondidas: { tema: string; resposta: string; livre: boolean }[];
-  pausou: boolean;
+export interface BatchResult {
+  state: DiscussionState;
+  answeredQuestions: { topic: string; answer: string; free: boolean }[];
+  paused: boolean;
 }
 
-/**
- * Mostra as perguntas uma por vez. Cada resposta é gravada na hora (via `salvar`) e fecha o tema.
- * Esc (ou rótulo desconhecido) interrompe o lote: as respondidas ficam e o estado vira pausado.
- */
-export async function perguntarLote(
+export async function askBatch(
   ctx: ExtensionContext,
-  estadoInicial: Estado,
-  lote: readonly PerguntaEntrada[],
-  salvar: (e: Estado) => void,
-  agora: () => string,
+  initialState: DiscussionState,
+  batch: readonly QuestionInput[],
+  save: (e: DiscussionState) => void,
+  now: () => string,
   signal?: AbortSignal,
-): Promise<ResultadoLote> {
-  let estado = estadoInicial;
-  const respondidas: ResultadoLote["respondidas"] = [];
-  const r = rotulos(estado.idioma);
-  for (const [i, p] of lote.entries()) {
-    const titulo = `[${i + 1}/${lote.length}] ${p.tema}: ${p.pergunta}`;
-    const escolha = interpretarEscolha(
+): Promise<BatchResult> {
+  let state = initialState;
+  const answeredQuestions: BatchResult["answeredQuestions"] = [];
+  const r = labels(state.idioma);
+  for (const [i, p] of batch.entries()) {
+    const title = `[${i + 1}/${batch.length}] ${p.tema}: ${p.pergunta}`;
+    const choice = interpretChoice(
       p,
-      await ctx.ui.select(titulo, opcoesDoSelect(p, estado.idioma), { signal }),
-      estado.idioma,
+      await ctx.ui.select(title, selectOptions(p, state.idioma), { signal }),
+      state.idioma,
     );
-    let resposta: string | undefined;
-    let livre = false;
-    if (escolha.tipo === "opcao") {
-      resposta = escolha.texto;
-    } else if (escolha.tipo === "livre") {
-      const texto = await ctx.ui.input(`${p.tema}: ${p.pergunta}`, r.outraResposta, { signal });
-      if (texto !== undefined && texto.trim() !== "") {
-        resposta = texto.trim();
-        livre = true;
+    let answer: string | undefined;
+    let free = false;
+    if (choice.kind === "option") {
+      answer = choice.text;
+    } else if (choice.kind === "free") {
+      const text = await ctx.ui.input(`${p.tema}: ${p.pergunta}`, r.otherAnswer, { signal });
+      if (text !== undefined && text.trim() !== "") {
+        answer = text.trim();
+        free = true;
       }
     }
-    if (resposta === undefined) {
-      estado = pausar(estado);
-      salvar(estado);
-      return { estado, respondidas, pausou: true };
+    if (answer === undefined) {
+      state = pause(state);
+      save(state);
+      return { state, answeredQuestions, paused: true };
     }
-    estado = registrarResposta(estado, p, resposta, livre, agora());
-    salvar(estado);
-    respondidas.push({ tema: p.tema, resposta, livre });
+    state = recordAnswer(state, p, answer, free, now());
+    save(state);
+    answeredQuestions.push({ topic: p.tema, answer, free });
   }
-  return { estado, respondidas, pausou: false };
+  return { state, answeredQuestions, paused: false };
 }

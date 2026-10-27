@@ -1,14 +1,13 @@
-import type { Estado } from "./estado.ts";
-import { plural, rotulos } from "./i18n.ts";
-import { temasAbertos } from "./temas.ts";
+import { labels, plural } from "./i18n.ts";
+import type { DiscussionState } from "./state.ts";
+import { openTopics } from "./topics.ts";
 
-/** Texto do rodapé: "Discussão: 2 perguntas · 8 temas abertos". */
-export function textoStatus(estado: Estado): string {
-  const r = rotulos(estado.idioma);
-  const partes = [
-    plural(estado.perguntas.length, r.pergunta),
-    plural(temasAbertos(estado.temas).length, r.temaAberto),
+export function statusText(state: DiscussionState): string {
+  const r = labels(state.idioma);
+  const parts = [
+    plural(state.perguntas.length, r.question),
+    plural(openTopics(state.temas).length, r.openTopic),
   ];
-  if (estado.pausado) partes.push(r.pausada);
-  return `${r.discussao}: ${partes.join(" · ")}`;
+  if (state.pausado) parts.push(r.paused);
+  return `${r.discussion}: ${parts.join(" · ")}`;
 }

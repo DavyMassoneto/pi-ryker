@@ -1,54 +1,47 @@
-import type { Estado } from "./estado.ts";
-import { FERRAMENTA_BLOQUEADA } from "./ferramentasAtivas.ts";
-import type { Tema } from "./temas.ts";
+import { BLOCKED_TOOL } from "./activeTools.ts";
+import type { DiscussionState } from "./state.ts";
+import type { Topic } from "./topics.ts";
 
-const LABEL_STATUS: Record<Tema["status"], string> = {
+const STATUS_LABEL: Record<Topic["status"], string> = {
   aberto: "aberto",
   decidido: "decidido",
   suposto: "suposto",
   adiado: "adiado",
 };
 
-function linhaTema(t: Tema): string {
-  const detalhe = t.status === "aberto" ? "" : t.texto ? ` — ${t.texto}` : "";
-  const reaberto = t.reabertura
+function topicLine(t: Topic): string {
+  const detail = t.status === "aberto" ? "" : t.texto ? ` — ${t.texto}` : "";
+  const reopened = t.reabertura
     ? ` [reaberto pelo usuário: ${t.reabertura.nota || "sem nota"}]`
     : "";
-  return `- ${t.id} (seção ${t.secao}) — ${t.titulo}: ${LABEL_STATUS[t.status]}${detalhe}${reaberto}`;
+  return `- ${t.id} (seção ${t.secao}) — ${t.titulo}: ${STATUS_LABEL[t.status]}${detail}${reopened}`;
 }
 
-/** Snapshot dos temas com status, anexado à seção do prompt a cada execução. */
-export function snapshotTemas(estado: Estado): string {
-  return estado.temas.map(linhaTema).join("\n");
+export function topicsSnapshot(state: DiscussionState): string {
+  return state.temas.map(topicLine).join("\n");
 }
 
-/** Regra pós-aprovação: o usuário não é mais perguntado; vale para a mensagem de bloqueio e o prompt. */
-export const REGRA_POS_APROVACAO =
+export const POST_APPROVAL_RULE =
   "Depois da aprovação da visão o usuário não é perguntado sobre nada: modelo, esforço de raciocínio, agentes e abordagem são seus; decida e registre como suposição. Dúvida macro genuína (o quê/porquê/escopo): diga em texto e pare.";
 
-/** Seção do prompt depois da aprovação da visão (fase "aprovada"). */
-export function secaoPromptPosAprovacao(): string {
+export function postApprovalPromptSection(): string {
   return `# Ryker — após a aprovação da visão
 
-A visão foi aprovada em .ryker/visao.html. ${REGRA_POS_APROVACAO}
-Planeje e execute o que a visão descreve, sem o usuário. Não use ${FERRAMENTA_BLOQUEADA}: ela segue bloqueada.`;
+A visão foi aprovada em .ryker/visao.html. ${POST_APPROVAL_RULE}
+Planeje e execute o que a visão descreve, sem o usuário. Não use ${BLOCKED_TOOL}: ela segue bloqueada.`;
 }
 
-function linhaIdioma(estado: Estado): string {
-  if (estado.idioma) {
-    return `Responda no idioma do usuário (idioma registrado: "${estado.idioma}"). Continue usando esse idioma e informe-o em "idioma" nas chamadas das ferramentas Ryker; se o usuário passar a escrever em outro, envie a nova tag.`;
+function languageLine(state: DiscussionState): string {
+  if (state.idioma) {
+    return `Responda no idioma do usuário (idioma registrado: "${state.idioma}"). Continue usando esse idioma e informe-o em "idioma" nas chamadas das ferramentas Ryker; se o usuário passar a escrever em outro, envie a nova tag.`;
   }
   return 'Responda no idioma do usuário. O idioma dele ainda não está registrado: na PRIMEIRA chamada de qualquer ferramenta Ryker (ryker_perguntar, ryker_temas ou ryker_documento) passe "idioma" com a tag do idioma em que o usuário escreve (ex.: "pt-BR", "en", "es"). Sem isso a chamada é recusada.';
 }
 
-/**
- * Seção do system prompt da etapa Discussão Global. É o coração do comportamento:
- * o agente só faz perguntas MACRO, pela ferramenta, e decide o resto sozinho.
- */
-export function secaoPrompt(estado: Estado): string {
+export function promptSection(state: DiscussionState): string {
   return `# Ryker — Discussão Global
 
-Você está na etapa Discussão Global do método Ryker. ${linhaIdioma(estado)}
+Você está na etapa Discussão Global do método Ryker. ${languageLine(state)}
 
 ## Seu papel
 Levantar com o usuário apenas as decisões MACRO: o quê e o porquê. Isto é: o problema, para quem, o resultado esperado, o escopo (o que entra e o que fica fora), as restrições duras e as escolhas caras de reverter. Nunca discuta o COMO (arquitetura, bibliotecas, estrutura interna, nomes, detalhes de implementação). Nesta etapa você não escreve nem altera arquivos: só lê e pergunta.
@@ -72,16 +65,16 @@ Pergunte a partir do topo da fila, até 4 por chamada de ryker_perguntar. Depois
 
 ## Como perguntar
 - Pergunte SOMENTE pela ferramenta ryker_perguntar, nunca em texto. Uma pergunta escrita na resposta é um defeito: ela não é gravada e não fecha o tema.
-- Não use ${FERRAMENTA_BLOQUEADA}: ela está bloqueada nesta etapa.
+- Não use ${BLOCKED_TOOL}: ela está bloqueada nesta etapa.
 - Até 4 perguntas por chamada. Cada uma tem: o tema (id da lista abaixo), a pergunta, de 2 a 5 opções e o índice da recomendada (a sua melhor sugestão, com base no que você leu). Não inclua "Outra resposta…": a interface já a oferece.
 - Um tema por pergunta; não repita tema na mesma chamada.
 - Não pergunte sobre tema fechado (decidido, suposto ou adiado). Se a ferramenta rejeitar a chamada, corrija e tente de novo.
 - Se o usuário pausar (Esc), pare de perguntar e espere a próxima mensagem dele.
 
 ## Temas e status atuais
-Pedido original: ${estado.pedido}
+Pedido original: ${state.pedido}
 
-${snapshotTemas(estado)}
+${topicsSnapshot(state)}
 
 ## Fechar temas sem perguntar: ryker_temas
 Lote de 1 a 20 itens, tudo-ou-nada (um erro descarta o lote inteiro; corrija e reenvie). Ações:
