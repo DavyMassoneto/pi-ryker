@@ -418,3 +418,26 @@ Each old name maps to its new name wherever it was declared (types, constants, f
 | `vr` | `validation` |
 
 Internal discriminant values were translated as well: `kind` of file reads (`absent`, `ok`, `corrupted`), restoration actions (`reapply`, `warn`, `recreate`, `corrupted`, `nothing`), choices (`option`, `free`, `cancelled`), Opus choices (`none`, `one`, `many`), selection steps (`selection`, `done`, `back`), approval results (`approved`, `reopened`, `pending`).
+
+## Stage driver core (F1a, part 1)
+
+New files, named in English from the start. The plan uses the Portuguese names on the left.
+
+| Plan | New |
+|---|---|
+| `src/core/sessao.ts` | `src/core/session.ts` (plus `sessionRegistry.ts`, state keyed by full session id) |
+| `src/core/trava.ts` | `src/core/lock.ts` (plus `gitRoot.ts`, `openCycles.ts` for the open-cycles index, SUP-51) |
+| `src/core/estados.ts` | `src/core/cycleStates.ts` |
+| `src/core/ciclo.ts` | `src/core/cycle.ts` (stage 2 only so far) |
+| `src/core/prompts.ts` | `src/core/prompts.ts` |
+| `src/core/plano.ts` | `src/core/plan.ts` |
+| `src/core/achados.ts` | `src/core/findings.ts` (plus `agentStatus.ts` for the agent STATUS line) |
+| `src/core/politica.ts` | `src/core/policy.ts` |
+| `src/core/blindagem.ts` | `src/core/shielding.ts` |
+| `src/core/controle.ts` | `src/core/controlFiles.ts` |
+| `src/core/git.ts` (pure parts) | `src/core/gitRefs.ts` |
+| `src/core/progresso.ts` | `src/core/progress.ts` |
+| `src/core/tokens.ts` | `src/core/tokens.ts` |
+| `src/core/status.ts` (cycle part) | `src/core/cycleStatus.ts` (the Discussion `status.ts` is unchanged) |
+
+Persisted names kept: `donoSessao` in `DiscussionState` (state version 2; a version 1 file migrates on read, with no owner), and the lock file `.pi/ryker/trava.json`.

@@ -46,7 +46,8 @@ export interface Previous {
 }
 
 export interface DiscussionState {
-  versao: 1;
+  versao: 2;
+  donoSessao?: string;
   fase: Phase;
   pedido: string;
   idioma?: Language;
@@ -61,7 +62,7 @@ export interface DiscussionState {
   aprovadoEm?: string;
 }
 
-export const STATE_VERSION = 1;
+export const STATE_VERSION = 2;
 
 export interface CreateParams {
   request: string;
