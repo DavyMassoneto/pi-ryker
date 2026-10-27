@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { resolve } from "node:path";
 import { test } from "node:test";
-import { validatePlan } from "./plan.ts";
+import { repositoriesText, validatePlan } from "./plan.ts";
 
 const SECTIONS = `## Production order
 - 3 | nucleo | T1
@@ -89,11 +90,61 @@ test("task without a repository is reported (B12)", () => {
   assert.match(result.ok ? "" : result.problems.join("\n"), /T1.*repository/);
 });
 
+const withRepository = (value: string) =>
+  plan(TASK.replace("repository: .", `repository: ${value}`));
+const absolute = resolve("/work/app");
+
+test("repository is normalised before the comparison (B12)", () => {
+  const options = { owners, repositories: [absolute] };
+  for (const value of [".", "./", absolute, absolute.replace(/\\/g, "/"), `${absolute}/`]) {
+    assert.equal(validatePlan(withRepository(value), options).ok, true, value);
+  }
+  assert.equal(validatePlan(withRepository("../other"), options).ok, false);
+  assert.equal(validatePlan(withRepository("sub"), options).ok, false);
+});
+
+test("backticks and the Git Bash drive form are accepted (N31)", () => {
+  const options = { owners, repositories: [absolute] };
+  assert.equal(validatePlan(withRepository("`.`"), options).ok, true);
+  assert.equal(validatePlan(withRepository(`\`${absolute}\``), options).ok, true);
+  const bash = absolute
+    .replace(/^([A-Za-z]):/, (_m, d: string) => `/${d.toLowerCase()}`)
+    .replace(/\\/g, "/");
+  assert.equal(validatePlan(withRepository(bash), options).ok, true, bash);
+});
+
+test("repository comparison ignores case on win32 only", () => {
+  const options = { owners, repositories: [absolute] };
+  const result = validatePlan(withRepository(absolute.toUpperCase()), options).ok;
+  assert.equal(result, process.platform === "win32");
+});
+
+test("a relative repository is not resolved when the cycle has several repositories", () => {
+  const options = { owners, repositories: [absolute, resolve("/work/lib")] };
+  assert.equal(validatePlan(withRepository("."), options).ok, false);
+  assert.equal(validatePlan(withRepository(absolute), options).ok, true);
+});
+
+test("the repository error names the accepted repositories (B12)", () => {
+  const result = validatePlan(withRepository("nowhere"), { owners, repositories: [absolute] });
+  assert.equal(result.ok, false);
+  const text = result.ok ? "" : result.problems.join("\n");
+  assert.match(text, /T1.*repository nowhere is not a cycle repository/);
+  assert.ok(text.includes(absolute));
+  assert.match(text, /"\."/);
+});
+
+test("repositoriesText lists the accepted values (B12)", () => {
+  const text = repositoriesText([absolute]);
+  assert.ok(text.includes(absolute));
+  assert.match(text, /`\.`/);
+});
+
 test("task repository must be one of the cycle repositories (B12)", () => {
   assert.equal(validatePlan(plan(), { owners, repositories: ["."] }).ok, true);
-  const result = validatePlan(plan(), { owners, repositories: ["other"] });
+  const result = validatePlan(withRepository("elsewhere"), { owners, repositories: ["other"] });
   assert.equal(result.ok, false);
-  assert.match(result.ok ? "" : result.problems.join("\n"), /T1.*repository \. is not/);
+  assert.match(result.ok ? "" : result.problems.join("\n"), /T1.*repository elsewhere is not/);
 });
 
 test("plan without any task is invalid", () => {

@@ -1,17 +1,19 @@
+import { basename } from "node:path";
 import { parseAgentStatus } from "../core/agentStatus.ts";
-import { buildManifest, diffManifests, evaluateControlChange } from "../core/controlFiles.ts";
-import type { ControlSnapshot as OutsideSnapshot } from "../core/controlSnapshot.ts";
+import type { ControlSnapshot } from "../core/controlSnapshot.ts";
 import { planHeadings } from "../core/coverage.ts";
 import { advance, type CycleEvent, type CycleState, MAX_ROUNDS } from "../core/cycle.ts";
 import type { CycleConfig } from "../core/cycleConfig.ts";
 import {
   agentChangeNote,
+  cancelledAgentChangeNote,
   errorNote,
   exitsRequiredNote,
   leaseLostNote,
   leftoverProcessesNote,
   outsideChangeNote,
   pauseSummary,
+  rejectedRuntimeNote,
   stageSummary,
   workspaceChangeNote,
 } from "../core/cycleMessages.ts";
@@ -20,15 +22,23 @@ import {
   codeCheckFeedbackPath,
   executionDir,
   executionLabel,
+  isRuntimeFile,
   planPath,
   progressPath,
+  repositoriesPath,
   reviewPath,
   templatePath,
 } from "../core/cyclePaths.ts";
-import type { CycleClosure, CycleRecord } from "../core/cycleRecord.ts";
+import {
+  type CycleClosure,
+  type CycleRecord,
+  discardExecution,
+  type OwnedFiles,
+} from "../core/cycleRecord.ts";
+import { assignChanges } from "../core/executionOwnership.ts";
 import { missingCoverage, parseReview } from "../core/findings.ts";
 import type { RestorePoint } from "../core/gitRefs.ts";
-import { validatePlan } from "../core/plan.ts";
+import { repositoriesText, validatePlan } from "../core/plan.ts";
 import {
   buildPlannerPrompt,
   buildReviewerPrompt,
@@ -40,7 +50,6 @@ import { addUsage } from "../core/tokens.ts";
 import type { AgentRunResult } from "./agent.ts";
 import type { Lease } from "./lease.ts";
 
-export type ControlSnapshot = Record<string, string>;
 export type CancelReason = "stuck" | "other";
 export type WorkspaceCheck = { ok: true } | { ok: false; reason: string };
 
@@ -58,12 +67,10 @@ export interface DriverPorts {
     read(path: string): string | undefined;
     write(path: string, text: string): void;
     ensureDir(path: string): void;
+    list(folder: string): string[];
+    setAside(path: string): void;
   };
-  snapshot: OutsideSnapshot;
-  control: {
-    snapshot(extraPaths: readonly string[]): ControlSnapshot;
-    restore(before: ControlSnapshot, after: ControlSnapshot): void;
-  };
+  snapshot: ControlSnapshot;
   workspace: WorkspacePort;
   askCancelReason(): Promise<CancelReason | undefined>;
   runAgent(
@@ -191,10 +198,41 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
     record = { ...record, tokens };
   };
 
+  const ownedBy = (role: AgentRole, dir: string): OwnedFiles => ({
+    folder: dir,
+    output: role === "planner" ? planPath(ports.cycleDir) : reviewPath(dir),
+  });
+
+  const acceptLateWrites = (): string[] => {
+    const owners = assignChanges(ports.snapshot.changes(), undefined, record.discarded ?? []);
+    ports.snapshot.recordWrite(owners.late);
+    return owners.foreign;
+  };
+
+  const startClean = (dir: string): void => {
+    const ran = ports.files.read(templatePath(dir, "plan")) !== undefined;
+    const leftovers = ports.files
+      .list(dir)
+      .filter(
+        (path) =>
+          path === reviewPath(dir) ||
+          path === progressPath(dir) ||
+          (!ran && isRuntimeFile(basename(path))),
+      );
+    for (const path of leftovers) ports.files.setAside(path);
+    if (!ran && leftovers.length > 0) {
+      ports.notify(rejectedRuntimeNote(leftovers, noticeLanguage), "warning");
+    }
+  };
+
+  const takeOwnership = (owned: OwnedFiles): OwnedFiles[] =>
+    (record.discarded ?? []).filter(
+      (dead) => dead.folder !== owned.folder && dead.output !== owned.output,
+    );
+
   const execute = async (
     role: AgentRole,
     prompt: (dir: string) => string,
-    extraControl: readonly string[],
   ): Promise<
     { result: AgentRunResult; dir: string; failedByCheck: boolean; notes: string[] } | "outside"
   > => {
@@ -203,32 +241,33 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
       notes.push(message);
       ports.notify(message, level);
     };
-    const dir = executionDir(ports.cycleDir, {
+    const address = {
       attempt: record.attempt,
       stage: record.cycle.stage,
       round: record.cycle.round,
       role,
-    });
+    };
+    const dir = executionDir(ports.cycleDir, address);
     ports.files.ensureDir(dir);
-    ports.files.write(templatePath(dir, "plan"), PLAN_TEMPLATE);
-    ports.files.write(templatePath(dir, "review"), REVIEW_TEMPLATE);
-    const own = role === "planner" ? planPath(ports.cycleDir) : reviewPath(dir);
-    const outside = ports.snapshot.outsideChanges([own]);
+    const outside = acceptLateWrites();
     if (outside.length > 0) {
-      ports.snapshot.restore(outside);
-      enterPause({ note: outsideChangeNote(outside, noticeLanguage) });
+      enterPause({ note: outsideChangeNote(outside, noticeLanguage), acceptOutside: true });
       return "outside";
     }
-    const restorePoint = ports.workspace.capture(
-      executionLabel({
-        attempt: record.attempt,
-        stage: record.cycle.stage,
-        round: record.cycle.round,
-        role,
-      }),
-    );
-    if (!commit({ ...record, execution: { restorePoint } })) return "outside";
-    const controlBefore = ports.control.snapshot(extraControl);
+    const owned = ownedBy(role, dir);
+    startClean(dir);
+    ports.files.write(templatePath(dir, "plan"), PLAN_TEMPLATE);
+    ports.files.write(templatePath(dir, "review"), REVIEW_TEMPLATE);
+    ports.files.write(repositoriesPath(ports.cycleDir), repositoriesText(record.directories));
+    const restorePoint = ports.workspace.capture(executionLabel(address));
+    const discarded = takeOwnership(owned);
+    const { discarded: _previous, ...current } = record;
+    const started: CycleRecord = {
+      ...current,
+      ...(discarded.length > 0 ? { discarded } : {}),
+      execution: { restorePoint, owned },
+    };
+    if (!commit(started)) return "outside";
     controller = new AbortController();
     executing = true;
     let result: AgentRunResult;
@@ -240,17 +279,17 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
     if (lost || !ports.lease.epochStillMine()) {
       return { result: { ...result, aborted: true }, dir, failedByCheck: false, notes };
     }
-    const after = ports.control.snapshot(extraControl);
+    const owners = assignChanges(ports.snapshot.changes(), owned, record.discarded ?? []);
+    ports.snapshot.recordWrite([...owners.own, ...owners.late]);
+    ports.snapshot.restore(owners.foreign);
     if (result.aborted) {
-      ports.control.restore(controlBefore, after);
+      if (owners.foreign.length > 0) {
+        ports.notify(cancelledAgentChangeNote(owners.foreign, noticeLanguage), "warning");
+      }
       ports.workspace.restore(restorePoint);
-      record = withoutExecution(record);
+      record = discardExecution(record);
       return { result, dir, failedByCheck: false, notes };
     }
-    const decision = evaluateControlChange(
-      diffManifests(buildManifest(controlBefore), buildManifest(after)),
-      "agent",
-    );
     let failedByCheck = false;
     const workspace = ports.workspace.verify(restorePoint);
     if (!workspace.ok) {
@@ -258,9 +297,8 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
       warn(workspaceChangeNote(workspace.reason, noticeLanguage), "warning");
       failedByCheck = true;
     }
-    if (decision.action === "restoreAndFail") {
-      ports.control.restore(controlBefore, after);
-      warn(agentChangeNote(decision.paths, noticeLanguage), "warning");
+    if (owners.foreign.length > 0) {
+      warn(agentChangeNote(owners.foreign, noticeLanguage), "warning");
       failedByCheck = true;
     }
     if (result.leftoverCommands > 0) {
@@ -284,19 +322,21 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
   };
 
   const earlierReviews = (): string[] => {
+    const discarded = new Set((record.discarded ?? []).map((dead) => dead.folder));
     const found: string[] = [];
     for (let attempt = 1; attempt <= record.attempt; attempt++) {
       for (let round = 1; round <= MAX_ROUNDS; round++) {
         if (attempt === record.attempt && round >= record.cycle.round) break;
-        const path = reviewPath(
-          executionDir(ports.cycleDir, {
-            attempt,
-            stage: record.cycle.stage,
-            round,
-            role: "reviewer",
-          }),
-        );
-        if ((ports.files.read(path) ?? "").trim() !== "") found.push(path);
+        const folder = executionDir(ports.cycleDir, {
+          attempt,
+          stage: record.cycle.stage,
+          round,
+          role: "reviewer",
+        });
+        const path = reviewPath(folder);
+        if (!discarded.has(folder) && (ports.files.read(path) ?? "").trim() !== "") {
+          found.push(path);
+        }
       }
     }
     return found;
@@ -305,7 +345,12 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
   const plannerFiles = (): string[] => {
     const feedback = codeCheckFeedbackPath(ports.cycleDir);
     const hasFeedback = (ports.files.read(feedback) ?? "").trim() !== "";
-    return [...ports.inputFiles, ...(hasFeedback ? [feedback] : []), ...earlierReviews()];
+    return [
+      ...ports.inputFiles,
+      repositoriesPath(ports.cycleDir),
+      ...(hasFeedback ? [feedback] : []),
+      ...earlierReviews(),
+    ];
   };
 
   const commonValues = (dir: string) => ({
@@ -317,15 +362,12 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
 
   const planningStep = async (): Promise<StepOutcome> => {
     const planFile = planPath(ports.cycleDir);
-    const run = await execute(
-      "planner",
-      (dir) =>
-        buildPlannerPrompt({
-          ...commonValues(dir),
-          planPath: planFile,
-          templatePath: templatePath(dir, "plan"),
-        }),
-      [],
+    const run = await execute("planner", (dir) =>
+      buildPlannerPrompt({
+        ...commonValues(dir),
+        planPath: planFile,
+        templatePath: templatePath(dir, "plan"),
+      }),
     );
     if (run === "outside") return "halted";
     if (run.result.aborted) return "interrupted";
@@ -353,22 +395,24 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
 
   const reviewingStep = async (): Promise<StepOutcome> => {
     const planFile = planPath(ports.cycleDir);
-    const run = await execute(
-      "reviewer",
-      (dir) =>
-        buildReviewerPrompt({
-          language: language ?? "en",
-          stage: record.cycle.stage,
-          round: record.cycle.round,
-          files: [planFile, ...ports.inputFiles, ...earlierReviews()].join(", "),
-          stageExtras: "the plan and the cycle configuration",
-          stageChecks: STAGE_CHECKS[2],
-          progressPath: progressPath(dir),
-          reviewPath: reviewPath(dir),
-          templatePath: templatePath(dir, "review"),
-          ...(ports.config.vaultPath ? { vaultPath: ports.config.vaultPath } : {}),
-        }),
-      [planFile],
+    const run = await execute("reviewer", (dir) =>
+      buildReviewerPrompt({
+        language: language ?? "en",
+        stage: record.cycle.stage,
+        round: record.cycle.round,
+        files: [
+          planFile,
+          ...ports.inputFiles,
+          repositoriesPath(ports.cycleDir),
+          ...earlierReviews(),
+        ].join(", "),
+        stageExtras: "the plan and the cycle configuration",
+        stageChecks: STAGE_CHECKS[2],
+        progressPath: progressPath(dir),
+        reviewPath: reviewPath(dir),
+        templatePath: templatePath(dir, "review"),
+        ...(ports.config.vaultPath ? { vaultPath: ports.config.vaultPath } : {}),
+      }),
     );
     if (run === "outside") return "halted";
     if (run.result.aborted) return "interrupted";
@@ -532,6 +576,11 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
           return { ok: false, reason: "answer whether the cancelled execution was stuck first" };
         }
         if (isStopped()) return { ok: true };
+        if (record.acceptOutside) {
+          ports.snapshot.seed();
+          const { acceptOutside: _accepted, ...accepted } = record;
+          if (!commit(accepted)) return { ok: false, reason: leaseLostNote(noticeLanguage) };
+        }
         void run();
         return { ok: true };
       } catch (error) {

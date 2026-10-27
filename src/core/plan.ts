@@ -1,3 +1,5 @@
+import { isAbsolute, normalize, resolve } from "node:path";
+
 export interface PlanTask {
   id: string;
   repository: string;
@@ -74,6 +76,51 @@ const splitBar = (value: string): string[] =>
     .map((part) => part.trim())
     .filter((part) => part !== "");
 
+const unifySlashes = (value: string): string => value.replace(/\\/g, "/");
+
+const gitBashDrive = (value: string): string =>
+  process.platform === "win32" ? value.replace(/^\/([A-Za-z])(?=\/|$)/, "$1:") : value;
+
+function canonicalRepository(value: string, base: string | undefined): string {
+  const unified = gitBashDrive(
+    unifySlashes(
+      value
+        .trim()
+        .replace(/^`+|`+$/g, "")
+        .trim(),
+    ),
+  );
+  const resolved =
+    base !== undefined ? resolve(base, unified) : isAbsolute(unified) ? resolve(unified) : unified;
+  const normalised = unifySlashes(isAbsolute(resolved) ? resolved : normalize(resolved));
+  const trimmed = normalised.length > 1 ? normalised.replace(/\/+$/, "") : normalised;
+  return process.platform === "win32" ? trimmed.toLowerCase() : trimmed;
+}
+
+export function repositoriesText(repositories: readonly string[]): string {
+  return [
+    "# Cycle repositories",
+    "Every task's `- repository:` line must name one of these repositories, using the value inside the backticks.",
+    ...repositories.map((repository) => `- \`${repository}\``),
+    ...(repositories.length === 1 ? ["- `.` (the same repository, relative form)"] : []),
+    "",
+  ].join("\n");
+}
+
+function acceptedRepositories(repositories: readonly string[]): string {
+  const forms = repositories.length === 1 ? [...repositories, "."] : repositories;
+  return forms.map((form) => `"${form}"`).join(", ");
+}
+
+function isCycleRepository(value: string, repositories: readonly string[]): boolean {
+  const [only] = repositories;
+  const base = repositories.length === 1 && only !== undefined ? resolve(only) : undefined;
+  const wanted = canonicalRepository(value, base);
+  return repositories.some(
+    (repository) => canonicalRepository(repository, process.cwd()) === wanted,
+  );
+}
+
 function buildTask(
   raw: { id: string; fields: Map<string, string[]> },
   options: PlanOptions,
@@ -82,8 +129,10 @@ function buildTask(
   const value = (key: string): string => raw.fields.get(key)?.[0] ?? "";
   const repository = value("repository");
   if (repository === "") problems.push(`task ${raw.id}: missing repository`);
-  else if (options.repositories && !options.repositories.includes(repository)) {
-    problems.push(`task ${raw.id}: repository ${repository} is not a cycle repository`);
+  else if (options.repositories && !isCycleRepository(repository, options.repositories)) {
+    problems.push(
+      `task ${raw.id}: repository ${repository} is not a cycle repository; accepted: ${acceptedRepositories(options.repositories)}`,
+    );
   }
   const owner = value("owner");
   if (owner === "") problems.push(`task ${raw.id}: missing owner`);

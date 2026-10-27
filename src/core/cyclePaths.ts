@@ -28,6 +28,13 @@ export const planPath = (cycleDir: string): string => join(cycleDir, "plano.md")
 export const codeCheckFeedbackPath = (cycleDir: string): string =>
   join(cycleDir, "verificacao-codigo.md");
 
+export const repositoriesPath = (cycleDir: string): string => join(cycleDir, "repositorios.md");
+
+export const isTranscriptFile = (name: string): boolean => name.endsWith(".jsonl");
+
+export const isRuntimeFile = (name: string): boolean =>
+  name === "progresso.md" || isTranscriptFile(name);
+
 export interface ExecutionAddress {
   attempt: number;
   stage: number;

@@ -6,6 +6,11 @@ import type { Usage } from "./tokens.ts";
 
 export type CycleClosure = "stageNotBuilt" | "backToDiscussion" | "ended";
 
+export interface OwnedFiles {
+  folder: string;
+  output: string;
+}
+
 export interface CycleRecord {
   version: 1;
   cycleId: string;
@@ -20,8 +25,17 @@ export interface CycleRecord {
   note?: string;
   closed?: CycleClosure;
   finalBranch?: string;
-  execution?: { restorePoint: RestorePoint };
+  execution?: { restorePoint: RestorePoint; owned: OwnedFiles };
+  discarded?: OwnedFiles[];
   cancelQuestion?: boolean;
+  acceptOutside?: boolean;
+}
+
+export function discardExecution(record: CycleRecord): CycleRecord {
+  const { execution, ...rest } = record;
+  if (!execution) return rest;
+  const kept = (record.discarded ?? []).filter((owned) => owned.folder !== execution.owned.folder);
+  return { ...rest, discarded: [...kept, execution.owned] };
 }
 
 export interface NewRecordParams {

@@ -31,6 +31,7 @@ import {
 } from "../core/cyclePaths.ts";
 import {
   type CycleRecord,
+  discardExecution,
   newCycleRecord,
   parseCycleRecord,
   serializeCycleRecord,
@@ -59,15 +60,16 @@ import {
 } from "./driver.ts";
 import {
   addOpenCycle,
-  controlFs,
   controlSnapshotPorts,
   ensureExcluded,
   fileLockStore,
+  filesIn,
   readGitAliases,
   readOpenCycles,
   readText,
   removeFile,
   removeOpenCycle,
+  setAsideFile,
   writeAtomic,
 } from "./fsAdapters.ts";
 import { acquireLease, HEARTBEAT_MS, type Lease, type LeaseResult } from "./lease.ts";
@@ -197,7 +199,7 @@ function recordTree(snapshot: ControlSnapshot, folder: string): void {
     for (const entry of entries) {
       const path = join(current, entry.name);
       if (entry.isDirectory()) walk(path);
-      else if (entry.isFile() && entry.name !== "progresso.md") files.push(path);
+      else if (entry.isFile()) files.push(path);
     }
   };
   walk(folder);
@@ -262,7 +264,7 @@ function buildPorts(
   initial: CycleRecord,
   onClosed: (closed: CycleRecord) => void,
 ): DriverPorts {
-  const { directory, gitRoot, cycleDir, config, lease, repository } = env;
+  const { directory, cycleDir, config, lease, repository } = env;
   const shell = (): ShellContext => ({
     projectRoot: directory,
     allowedRoots: [
@@ -288,9 +290,13 @@ function buildPorts(
         snapshot.recordWrite([path]);
       },
       ensureDir: (path) => void mkdirSync(path, { recursive: true }),
+      list: filesIn,
+      setAside: (path) => {
+        setAsideFile(cycleDir)(path);
+        snapshot.recordWrite([path]);
+      },
     },
     snapshot,
-    control: controlFs(directory, gitRoot),
     workspace: repository.workspace(initial.cycleId),
     askCancelReason: () => askCancelReason(live, initial.language),
     runAgent: async (role, prompt, dir, progress, signal) => {
@@ -318,31 +324,26 @@ function buildPorts(
       );
       mkdirSync(isolatedDir, { recursive: true });
       if (environment) recordTree(snapshot, stageEnvironmentDir(stageDirOfExecution(dir)));
-      try {
-        return await deps.runAgent({
-          cwd: directory,
-          prompt,
-          executionDir: dir,
-          model: modelFor(role),
-          thinking: choice?.thinking,
-          guard: (continuation) =>
-            childGuardFactory({
-              policy: { role, allowed },
-              shell,
-              epochStillMine: lease.epochStillMine,
-              progressPath: progress,
-              readFile: readText,
-              fixedText: prompt,
-              continuation,
-            }),
-          ...(environment ? { environment } : {}),
-          shellEnv: agentShellEnv(isolatedDir, [directory, cycleDir]),
-          signal,
-        });
-      } finally {
-        recordTree(snapshot, dir);
-        snapshot.recordWrite([planPath(cycleDir)]);
-      }
+      return deps.runAgent({
+        cwd: directory,
+        prompt,
+        executionDir: dir,
+        model: modelFor(role),
+        thinking: choice?.thinking,
+        guard: (continuation) =>
+          childGuardFactory({
+            policy: { role, allowed },
+            shell,
+            epochStillMine: lease.epochStillMine,
+            progressPath: progress,
+            readFile: readText,
+            fixedText: prompt,
+            continuation,
+          }),
+        ...(environment ? { environment } : {}),
+        shellEnv: agentShellEnv(isolatedDir, [directory, cycleDir]),
+        signal,
+      });
     },
     modelLabel: (role) => modelName(modelFor(role)),
     lease,
@@ -561,14 +562,14 @@ function adoptCycle(
   const cycleDir = cycleHistoryDir(deps.agentDir, loaded.gitRoot, loaded.record.cycleId);
   const snapshot = createControlSnapshot(controlSnapshotPorts(directory, loaded.gitRoot, cycleDir));
   const restored = snapshot.load();
-  const { execution, ...withoutExecution } = loaded.record;
+  const { execution } = loaded.record;
   if (execution) repository.workspace(loaded.record.cycleId).restore(execution.restorePoint);
   const cycle =
     loaded.record.cycle.phase === "reviewing"
       ? { ...loaded.record.cycle, phase: "planning" as const }
       : loaded.record.cycle;
   const adopted: CycleRecord = {
-    ...withoutExecution,
+    ...discardExecution(loaded.record),
     cycle,
     ownerSession: sessionId,
     epoch: lease.epoch,
