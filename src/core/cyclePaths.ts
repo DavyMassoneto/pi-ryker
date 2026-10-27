@@ -25,6 +25,9 @@ export const cycleRecordPath = (directory: string): string =>
   join(projectRykerDir(directory), "ciclo.json");
 export const planPath = (cycleDir: string): string => join(cycleDir, "plano.md");
 
+export const codeCheckFeedbackPath = (cycleDir: string): string =>
+  join(cycleDir, "verificacao-codigo.md");
+
 export interface ExecutionAddress {
   attempt: number;
   stage: number;

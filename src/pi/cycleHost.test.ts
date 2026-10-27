@@ -210,6 +210,74 @@ test("host: shutdown pauses the cycle, stops the heartbeat and frees the session
   f.cleanup();
 });
 
+function blockingAgent(f: Fixture): void {
+  f.deps.runAgent = (request) =>
+    new Promise((resolve) => {
+      request.signal.addEventListener("abort", () =>
+        resolve({
+          text: "",
+          aborted: true,
+          leftoverCommands: 0,
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        }),
+      );
+    });
+}
+
+test("host: after the session is replaced the driver never touches the stale context (4c)", async () => {
+  const f = fixture();
+  blockingAgent(f);
+  let stale = false;
+  const staleError = () => {
+    throw new Error("This extension ctx is stale after session replacement or reload");
+  };
+  const ctx = {
+    ...f.ctx,
+    get hasUI(): boolean {
+      if (stale) staleError();
+      return true;
+    },
+    get ui(): HostContext["ui"] {
+      if (stale) staleError();
+      return f.ctx.ui;
+    },
+    get model(): HostContext["model"] {
+      if (stale) staleError();
+      return undefined;
+    },
+    get modelRegistry(): HostContext["modelRegistry"] {
+      if (stale) staleError();
+      return f.ctx.modelRegistry;
+    },
+  } as HostContext;
+  await startStageTwo(f.messenger, ctx, discussion(), f.deps);
+  const handle = cycleHandles.get("session-a");
+  await new Promise((resolve) => setImmediate(resolve));
+  stale = true;
+  await handle?.shutdown();
+  const record = parseCycleRecord(
+    readFileSync(join(f.project, ".pi", "ryker", "ciclo.json"), "utf8"),
+  );
+  assert.equal(record?.runState, "paused");
+  f.cleanup();
+});
+
+test("host: a session that lost ownership clears its Ryker status and widget (takeover)", async () => {
+  const f = fixture();
+  blockingAgent(f);
+  f.deps.heartbeatMs = 5;
+  await startStageTwo(f.messenger, f.ctx, discussion(), f.deps);
+  assert.match(f.status.get("ryker") ?? "", /^Ryker/);
+  writeFileSync(
+    lockPath(f.project),
+    JSON.stringify({ ownerSession: "session-b", cycleId: "x", epoch: 9, heartbeatAt: 1_000_000 }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(f.status.get("ryker"), undefined);
+  assert.equal(cycleHandles.has("session-a"), false);
+  f.cleanup();
+});
+
 test("host: another session does not attach to a cycle it does not own (C3a)", async () => {
   const f = fixture();
   await startStageTwo(f.messenger, f.ctx, discussion(), f.deps);

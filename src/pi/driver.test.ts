@@ -249,6 +249,35 @@ test("driver: an invalid plan fails the round without running the reviewer", asy
   );
 });
 
+test("driver: the failed plan check reaches the next planner round as a listed findings file", async () => {
+  const h = harness((role, _dir, fs) => {
+    if (role === "planner") fs.set(planPath(CYCLE_DIR), "## Tasks\n### T1 (stage 3)\n");
+    return {};
+  });
+  await createStageDriver(fresh(), h.ports).run();
+  const feedbackPath = join(CYCLE_DIR, "verificacao-codigo.md");
+  assert.equal(h.prompts[0]?.includes(feedbackPath), false);
+  assert.equal(h.prompts[1]?.includes(feedbackPath), true);
+  assert.match(h.fs.get(feedbackPath) ?? "", /Tasks has no task/);
+  assert.match(h.fs.get(feedbackPath) ?? "", /missing section: Production order/);
+});
+
+test("driver: a valid plan clears the code check findings", async () => {
+  let attempt = 0;
+  const h = harness((role, dir, fs) => {
+    if (role === "planner") {
+      attempt += 1;
+      fs.set(planPath(CYCLE_DIR), attempt === 1 ? "## Tasks\n" : VALID_PLAN);
+      return {};
+    }
+    fs.set(reviewPath(dir), review("APPROVED"));
+    fs.set(progressPath(dir), `## Coverage\n${planHeadings(VALID_PLAN).join("\n")}`);
+    return {};
+  });
+  await createStageDriver(fresh(), h.ports).run();
+  assert.equal(h.fs.get(join(CYCLE_DIR, "verificacao-codigo.md")), "");
+});
+
 test("driver: incomplete reviewer coverage counts as no STATUS (COB-2)", async () => {
   const h = harness((role, dir, fs) => {
     if (role === "planner") {

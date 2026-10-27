@@ -18,6 +18,7 @@ import {
 } from "../core/cycleMessages.ts";
 import {
   type AgentRole,
+  codeCheckFeedbackPath,
   executionDir,
   executionLabel,
   planPath,
@@ -188,7 +189,14 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
     role: AgentRole,
     prompt: (dir: string) => string,
     extraControl: readonly string[],
-  ): Promise<{ result: AgentRunResult; dir: string; failedByCheck: boolean } | "outside"> => {
+  ): Promise<
+    { result: AgentRunResult; dir: string; failedByCheck: boolean; notes: string[] } | "outside"
+  > => {
+    const notes: string[] = [];
+    const warn = (message: string, level: "warning" | "error"): void => {
+      notes.push(message);
+      ports.notify(message, level);
+    };
     const dir = executionDir(ports.cycleDir, {
       attempt: record.attempt,
       stage: record.cycle.stage,
@@ -225,14 +233,14 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
       executing = false;
     }
     if (lost || !ports.lease.epochStillMine()) {
-      return { result: { ...result, aborted: true }, dir, failedByCheck: false };
+      return { result: { ...result, aborted: true }, dir, failedByCheck: false, notes };
     }
     const after = ports.control.snapshot(extraControl);
     if (result.aborted) {
       ports.control.restore(controlBefore, after);
       ports.workspace.restore(restorePoint);
       record = withoutExecution(record);
-      return { result, dir, failedByCheck: false };
+      return { result, dir, failedByCheck: false, notes };
     }
     const decision = evaluateControlChange(
       diffManifests(buildManifest(controlBefore), buildManifest(after)),
@@ -242,30 +250,43 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
     const workspace = ports.workspace.verify(restorePoint);
     if (!workspace.ok) {
       ports.workspace.restore(restorePoint);
-      ports.notify(workspaceChangeNote(workspace.reason, noticeLanguage), "warning");
+      warn(workspaceChangeNote(workspace.reason, noticeLanguage), "warning");
       failedByCheck = true;
     }
     if (decision.action === "restoreAndFail") {
       ports.control.restore(controlBefore, after);
-      ports.notify(agentChangeNote(decision.paths, noticeLanguage), "warning");
+      warn(agentChangeNote(decision.paths, noticeLanguage), "warning");
       failedByCheck = true;
     }
     if (result.leftoverCommands > 0) {
-      ports.notify(leftoverProcessesNote(result.leftoverCommands, noticeLanguage), "warning");
+      warn(leftoverProcessesNote(result.leftoverCommands, noticeLanguage), "warning");
       failedByCheck = true;
     }
     if (result.error && !result.aborted) {
-      ports.notify(result.error, "error");
+      warn(result.error, "error");
       failedByCheck = true;
     }
     record = withoutExecution(record);
     recordUsage(role, result);
-    return { result, dir, failedByCheck };
+    return { result, dir, failedByCheck, notes };
+  };
+
+  const recordFeedback = (lines: readonly string[]): void => {
+    ports.files.write(
+      codeCheckFeedbackPath(ports.cycleDir),
+      lines.length === 0 ? "" : `# Code check findings\n${lines.map((l) => `- ${l}`).join("\n")}\n`,
+    );
+  };
+
+  const plannerFiles = (): string[] => {
+    const feedback = codeCheckFeedbackPath(ports.cycleDir);
+    const hasFeedback = (ports.files.read(feedback) ?? "").trim() !== "";
+    return hasFeedback ? [...ports.inputFiles, feedback] : ports.inputFiles;
   };
 
   const commonValues = (dir: string) => ({
     language: language ?? "en",
-    files: ports.inputFiles.join(", "),
+    files: plannerFiles().join(", "),
     progressPath: progressPath(dir),
     ...(ports.config.vaultPath ? { vaultPath: ports.config.vaultPath } : {}),
   });
@@ -285,12 +306,21 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
     if (run === "outside") return "halted";
     if (run.result.aborted) return "interrupted";
     if (run.failedByCheck) {
+      recordFeedback(run.notes);
       applyEvent({ type: "codeCheckFailed" });
       return "continue";
     }
     const planText = ports.files.read(planFile);
-    const planValid =
-      planText !== undefined && validatePlan(planText, { owners: ports.config.owners }).ok;
+    const checked =
+      planText === undefined ? undefined : validatePlan(planText, { owners: ports.config.owners });
+    const planValid = checked?.ok === true;
+    recordFeedback(
+      checked === undefined
+        ? ["the plan file was not written"]
+        : checked.ok
+          ? []
+          : checked.problems,
+    );
     applyEvent({ type: "planner", status: plannerStatus(run.result.text), planValid });
     return "continue";
   };

@@ -48,3 +48,11 @@ What F1a could not do the way the design asks, why, and what the code does inste
 ## Configuration (F1a)
 
 - The design has the Discussion write `.pi/ryker/config.json` in F1b. F1a keeps reading the hand-written file and validates it with named problems (absolute `vaultPath` and `allowedRoots`, `piWeb.port` range, non-empty owner names, model and thinking shapes).
+
+## Esc, Stop and session replacement (F1a live proof)
+
+- `ctx.ui.onTerminalInput` is delivered only in the interactive CLI. In RPC mode and in pi-web Esc never reaches the extension, so the Esc listener is a no-op there and `/ryker parar` is the way to cancel a running execution in both. It is an extension command, so it works through RPC prompts and the pi-web input box.
+- The pi-web Stop button sends `abort` to the owner session. The driver runs outside the conversation and the session is idle, so pi emits no event the extension can hear (`agent_end` and `agent_before_settle` only fire for a turn of the session). Stop therefore does not pause the cycle; use `/ryker parar`.
+- After a session replacement or shutdown the driver keeps its state paused and no longer touches the old context: UI updates go through `liveUi.ts`, which is retired on shutdown and on the first stale-context error. The models are resolved when the cycle is attached.
+- A session that loses ownership clears its `ryker` status and widget at its next heartbeat; the read-only status then comes from the reader refresh.
+- A failed code check of the plan (strict headings and `yes`/`no` fields) is written to `verificacao-codigo.md` in the cycle folder and listed in the next planner prompt as an input file; a valid plan empties it.

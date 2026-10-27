@@ -59,6 +59,7 @@ import {
 } from "./fsAdapters.ts";
 import { acquireLease, HEARTBEAT_MS, type Lease, type LeaseResult } from "./lease.ts";
 import { registerLiveness } from "./liveness.ts";
+import { createLiveUi, type LiveUi } from "./liveUi.ts";
 import { DISCUSSION_FILE, moveVisionToCycle, VISION_FILE } from "./persistence.ts";
 import { gitRepository, type RepositoryPort } from "./repository.ts";
 import type { StageEnvironment } from "./stageEnvironment.ts";
@@ -164,13 +165,14 @@ function readConfig(
 }
 
 async function askCancelReason(
-  ctx: HostContext,
+  live: LiveUi,
   language: string | undefined,
 ): Promise<CancelReason | undefined> {
-  if (!ctx.hasUI || !ctx.ui.select) return undefined;
+  const ui = live.current();
+  if (!ui?.select) return undefined;
   const question = cancelQuestion(language);
   try {
-    const answer = await ctx.ui.select(question.title, [question.stuck, question.other]);
+    const answer = await ui.select(question.title, [question.stuck, question.other]);
     if (answer === question.stuck) return "stuck";
     if (answer === question.other) return "other";
   } catch {}
@@ -193,6 +195,7 @@ function readStageEnvironment(
 function buildPorts(
   messenger: HostMessenger,
   ctx: HostContext,
+  live: LiveUi,
   deps: HostDeps,
   env: CycleEnv,
   initial: CycleRecord,
@@ -211,8 +214,11 @@ function buildPorts(
     piWeb: config.piWeb,
     gitAliases: readGitAliases(directory),
   });
-  const modelFor = (role: "planner" | "reviewer") =>
-    asModel(ctx, role === "planner" ? config.planner : config.reviewer);
+  const models = {
+    planner: asModel(ctx, config.planner),
+    reviewer: asModel(ctx, config.reviewer),
+  };
+  const modelFor = (role: "planner" | "reviewer") => models[role];
   return {
     cycleDir,
     config,
@@ -224,7 +230,7 @@ function buildPorts(
     },
     control: controlFs(directory, gitRoot),
     workspace: repository.workspace(initial.cycleId),
-    askCancelReason: () => askCancelReason(ctx, initial.language),
+    askCancelReason: () => askCancelReason(live, initial.language),
     runAgent: async (role, prompt, dir, progress, signal) => {
       const allowed =
         role === "planner" ? [planPath(cycleDir), progress] : [reviewPath(dir), progress];
@@ -266,15 +272,16 @@ function buildPorts(
     lease,
     saveRecord: (saved) => writeAtomic(cycleRecordPath(directory), serializeCycleRecord(saved)),
     showView: (shown) => {
-      if (!ctx.hasUI) return;
+      const ui = live.current();
+      if (!ui) return;
       try {
-        ctx.ui.setStatus("ryker", ownerStatus(shown));
-        ctx.ui.setWidget("ryker", ownerWidget(shown));
+        ui.setStatus("ryker", ownerStatus(shown));
+        ui.setWidget("ryker", ownerWidget(shown));
       } catch {}
     },
     notify: (message, level) => {
       try {
-        ctx.ui.notify(message, level);
+        live.current()?.notify(message, level);
       } catch {}
     },
     announce: (summary) => {
@@ -314,20 +321,32 @@ function buildHandle(
   const releaseLiveness = registerLiveness(sessionId, ctx.sessionManager.getSessionFile(), () =>
     cycleHandles.has(sessionId),
   );
+  const live = createLiveUi(ctx);
   const stopListening = listenForEscape(ctx, () => driver);
   const dispose = (): void => {
     clearInterval(timer);
     releaseLiveness();
-    stopListening();
+    try {
+      stopListening();
+    } catch {}
     if (cycleHandles.get(sessionId) === handle) cycleHandles.delete(sessionId);
+  };
+  const clearView = (): void => {
+    const ui = live.current();
+    if (!ui) return;
+    try {
+      ui.setStatus("ryker", undefined);
+      ui.setWidget("ryker", undefined);
+    } catch {}
   };
   timer = setInterval(() => {
     if (env.lease.heartbeat()) return;
     driver?.leaseLost();
+    clearView();
     dispose();
   }, deps.heartbeatMs);
   timer.unref();
-  const ports = buildPorts(messenger, ctx, deps, env, initial, (closed) => {
+  const ports = buildPorts(messenger, ctx, live, deps, env, initial, (closed) => {
     removeOpenCycle(index, closed.cycleId);
     env.lease.release();
     dispose();
@@ -340,6 +359,7 @@ function buildHandle(
     driver: created,
     running: Promise.resolve(),
     shutdown: async () => {
+      live.retire();
       created.suspend();
       created.requestPause();
       await built.running;
