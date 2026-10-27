@@ -34,7 +34,14 @@ test("happy path: an approved discussion runs stage 2 to approval and leaves its
     assert.ok(record);
     assert.equal(record.cycle.phase, "approved");
     assert.equal(record.closed, "stageNotBuilt");
+    assert.equal(record.runState, "paused");
     assert.ok(record.tokens.length > 0);
+    assert.match(session.screen.statusHistory.at(-1) ?? "", /Planning · stage 3 not available · /);
+    assert.match((session.screen.widgetHistory.at(-1) ?? [])[0] ?? "", /stage 3 not available$/);
+    assert.equal(pi.messages.length, 1);
+    assert.match(pi.messages[0] ?? "", /stage 2 \(Planning\) approved/);
+    assert.match(pi.messages[0] ?? "", /plano\.md/);
+    assert.match(pi.messages[0] ?? "", /Stage 3 is not available in this version/);
 
     assert.match(
       readFileSync(join(world.project, ".git", "info", "exclude"), "utf8"),

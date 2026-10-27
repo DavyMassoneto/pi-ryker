@@ -156,22 +156,26 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
     return true;
   };
 
+  const summary = (): string => stageSummary(record, planPath(ports.cycleDir));
+
   const closeCycle = (closed: "stageNotBuilt" | "backToDiscussion"): void => {
-    if (!commit({ ...record, closed })) return;
-    ports.announce(stageSummary(record));
+    if (!commit({ ...record, runState: "paused", closed })) return;
+    ports.announce(summary());
     ports.onClosed(record);
   };
 
+  const enterNextStage = (): void => closeCycle("stageNotBuilt");
+
   const stopCycle = (): void => {
     if (!commit({ ...record, runState: "paused" })) return;
-    ports.announce(stageSummary(record));
-    ports.notify(stageSummary(record), "warning");
+    ports.announce(summary());
+    ports.notify(summary(), "warning");
   };
 
   const applyEvent = (event: CycleEvent): void => {
     const cycle = advance(record.cycle, event);
     if (!commit({ ...record, cycle })) return;
-    if (cycle.phase === "approved") closeCycle("stageNotBuilt");
+    if (cycle.phase === "approved") enterNextStage();
     else if (cycle.phase === "backToDiscussion") closeCycle("backToDiscussion");
     else if (cycle.phase === "stopped") stopCycle();
   };

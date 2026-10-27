@@ -8,15 +8,15 @@ const STOP_REASONS = {
   blocked: { pt: "o agente reportou BLOCKED", en: "the agent reported BLOCKED" },
 } as const;
 
-export function stageSummary(record: CycleRecord): string {
+export function stageSummary(record: CycleRecord, planFile: string): string {
   const pt = isPortuguese(record.language);
   const tokens = formatTokens(grandTotal(record.tokens), record.language);
   const stage = pt ? "Planejamento" : "Planning";
   const round = record.cycle.round;
   if (record.cycle.phase === "approved") {
     return pt
-      ? `Ryker: etapa 2 (${stage}) aprovada na rodada ${round}, ${tokens} tokens. A etapa 3 ainda não foi construída: o ciclo foi arquivado e a trava liberada.`
-      : `Ryker: stage 2 (${stage}) approved in round ${round}, ${tokens} tokens. Stage 3 is not built yet: the cycle was archived and the lock released.`;
+      ? `Ryker: etapa 2 (${stage}) aprovada na rodada ${round}, ${tokens} tokens. O plano está em ${planFile}. A etapa 3 não está disponível nesta versão: o ciclo terminou aqui e a trava foi liberada.`
+      : `Ryker: stage 2 (${stage}) approved in round ${round}, ${tokens} tokens. The plan is at ${planFile}. Stage 3 is not available in this version: the cycle ended here and the lock was released.`;
   }
   if (record.cycle.phase === "backToDiscussion") {
     return pt

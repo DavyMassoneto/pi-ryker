@@ -36,13 +36,25 @@ function stageTwoRow(record: CycleRecord): StageRow {
   return { status: "current", detail: `${round}${spent}` };
 }
 
+const CLOSURE_LABELS = {
+  stageNotBuilt: { pt: "etapa 3 indisponível", en: "stage 3 not available" },
+  backToDiscussion: { pt: "voltou à Discussão", en: "back to Discussion" },
+} as const;
+
+const closureLabel = (record: CycleRecord): string | undefined =>
+  record.closed
+    ? CLOSURE_LABELS[record.closed][isPortuguese(record.language) ? "pt" : "en"]
+    : undefined;
+
 export function ownerStatus(record: CycleRecord): string {
+  const outcome = closureLabel(record);
   return statusLine({
     stage: record.cycle.stage,
     stageName: stageName(record.cycle.stage, record.language),
     round: record.cycle.round,
     maxRounds: MAX_ROUNDS,
     tokens: grandTotal(record.tokens),
+    ...(outcome ? { outcome } : {}),
     ...(record.language ? { language: record.language } : {}),
   });
 }
@@ -62,10 +74,12 @@ export function ownerWidget(record: CycleRecord): string[] {
     if (index === 1) return stageTwoRow(record);
     return { status: "pending" };
   });
+  const stateLabel = closureLabel(record);
   return widgetLines({
     cycleId: record.cycleId,
     repositories: record.directories.length,
     state: record.runState,
+    ...(stateLabel ? { stateLabel } : {}),
     stages: rows,
     ...(record.language ? { language: record.language } : {}),
   });

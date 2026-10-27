@@ -11,6 +11,7 @@ export interface StatusLineInput {
   maxRounds: number;
   owner?: string;
   tokens: number;
+  outcome?: string;
   language?: Language;
 }
 
@@ -29,6 +30,7 @@ export interface WidgetInput {
   cycleId: string;
   repositories: number;
   state: RunState;
+  stateLabel?: string;
   stages: readonly StageRow[];
   language?: Language;
 }
@@ -62,7 +64,7 @@ export function statusLine(input: StatusLineInput): string {
   const pt = locale(input.language) === "pt";
   const parts = [
     `${input.stage}/${TOTAL_STAGES} ${input.stageName}`,
-    `${pt ? "rodada" : "round"} ${input.round}/${input.maxRounds}`,
+    input.outcome ?? `${pt ? "rodada" : "round"} ${input.round}/${input.maxRounds}`,
   ];
   if (input.owner) parts.push(`${pt ? "dono" : "owner"}: ${input.owner}`);
   parts.push(`${formatTokens(input.tokens, input.language)} tokens`);
@@ -85,7 +87,7 @@ export function widgetLines(input: WidgetInput): string[] {
       : plural(input.repositories, ["repository", "repositories"]);
   const cycle = lang === "pt" ? "ciclo" : "cycle";
   const lines = [
-    `Ryker — ${cycle} ${input.cycleId} (${repos}) · ${STATE_LABELS[lang][input.state]}`,
+    `Ryker — ${cycle} ${input.cycleId} (${repos}) · ${input.stateLabel ?? STATE_LABELS[lang][input.state]}`,
   ];
   for (const [index, row] of input.stages.entries()) {
     const name = `${index + 1} ${STAGE_NAMES[lang][index]}`;

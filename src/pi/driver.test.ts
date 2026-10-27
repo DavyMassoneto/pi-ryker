@@ -203,6 +203,10 @@ test("driver: planner then reviewer approve stage 2, close the cycle and announc
   assert.equal(driver.record().closed, "stageNotBuilt");
   assert.equal(h.closed.length, 1);
   assert.match(h.announced[0] ?? "", /stage 2 \(Planning\) approved in round 1/);
+  assert.match(h.announced[0] ?? "", /plano\.md/);
+  assert.match(h.announced[0] ?? "", /Stage 3 is not available in this version/);
+  assert.equal(driver.record().runState, "paused");
+  assert.equal(h.saved.at(-1)?.runState, "paused");
   assert.equal(driver.record().tokens.length, 2);
   assert.equal(driver.record().tokens[0]?.model, "model-planner");
 });

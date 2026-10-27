@@ -29,6 +29,15 @@ test("view: widget marks stage 2 current while running and done when approved", 
   assert.match(approved[2] ?? "", /^\[x\] 2 Planning\s+round 1 approved/);
 });
 
+test("view: a closed cycle shows its end state in the status line and widget header", () => {
+  const ended = { ...base, runState: "paused" as const, closed: "stageNotBuilt" as const };
+  assert.equal(ownerStatus(ended), "Ryker · 2/6 Planning · stage 3 not available · 0 tokens");
+  assert.match(ownerWidget(ended)[0] ?? "", /stage 3 not available$/);
+  const pt = { ...ended, language: "pt" };
+  assert.match(ownerStatus(pt), /etapa 3 indisponível/);
+  assert.match(ownerWidget(pt)[0] ?? "", /etapa 3 indisponível$/);
+});
+
 test("view: stage names follow the language", () => {
   assert.equal(stageName(2, "pt-BR"), "Planejamento");
   assert.equal(stageName(2, "en"), "Planning");

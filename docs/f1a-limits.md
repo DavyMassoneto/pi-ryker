@@ -56,3 +56,9 @@ What F1a could not do the way the design asks, why, and what the code does inste
 - After a session replacement or shutdown the driver keeps its state paused and no longer touches the old context: UI updates go through `liveUi.ts`, which is retired on shutdown and on the first stale-context error. The models are resolved when the cycle is attached.
 - A session that loses ownership clears its `ryker` status and widget at its next heartbeat; the read-only status then comes from the reader refresh.
 - A failed code check of the plan (strict headings and `yes`/`no` fields) is written to `verificacao-codigo.md` in the cycle folder and listed in the next planner prompt as an input file; a valid plan empties it.
+
+## End state after stage 2 is approved (stage 3 not built until F2)
+
+- The design's run states are running, paused and awaiting approval; none means "the next stage is not available". F1a records `runState: "paused"` together with `closed: "stageNotBuilt"` in `ciclo.json`, because nothing runs and only the user can decide what comes next.
+- The status line and the widget header show "stage 3 not available" instead of the round or the paused label, and the owner session gets one message with the approval, the plan file path and the stage 3 notice.
+- The transition is the single function `enterNextStage` in `src/pi/driver.ts`; F2 replaces it with the real entry into stage 3.

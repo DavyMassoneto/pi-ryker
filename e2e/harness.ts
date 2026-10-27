@@ -281,9 +281,11 @@ export interface FakePi {
   api: ExtensionAPI;
   handlers: Map<string, PiHandler>;
   commands: Map<string, (args: string, ctx: unknown) => Promise<void>>;
+  messages: string[];
 }
 
 export function fakePi(): FakePi {
+  const messages: string[] = [];
   const handlers = new Map<string, PiHandler>();
   const commands = new Map<string, (args: string, ctx: unknown) => Promise<void>>();
   const api = {
@@ -293,11 +295,11 @@ export function fakePi(): FakePi {
       options: { handler: (args: string, ctx: unknown) => Promise<void> },
     ) => void commands.set(name, options.handler),
     registerTool: () => {},
-    sendMessage: () => {},
+    sendMessage: (message: { content: string }) => void messages.push(message.content),
     sendUserMessage: () => {},
     setActiveTools: () => {},
     getActiveTools: () => [],
     appendEntry: () => {},
   } as unknown as ExtensionAPI;
-  return { api, handlers, commands };
+  return { api, handlers, commands, messages };
 }
