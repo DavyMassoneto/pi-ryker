@@ -8,7 +8,7 @@ import { createState, type DiscussionState, isStageActive, type ModelRef } from 
 import { statusText } from "../core/status.ts";
 import { approvalDialog, correctionLoop, reopenAndWrite } from "./approval.ts";
 import { isCycleSubcommand, runCycleCommand } from "./cycleCommands.ts";
-import { defaultHostDeps } from "./cycleHost.ts";
+import { defaultHostDeps, projectHistory } from "./cycleHost.ts";
 import { archiveApproved, ownershipRefusal, readState, saveState } from "./persistence.ts";
 import { projectSessionView } from "./projectSession.ts";
 
@@ -69,7 +69,7 @@ export function registerCommand(pi: ExtensionAPI): void {
       const stateRead = readState(ctx.cwd);
       if (stateRead.kind === "corrupted") {
         ctx.ui.notify(
-          `.ryker/discussao.json ilegível (${stateRead.error}). Não vou sobrescrever; corrija ou apague o arquivo.`,
+          `.pi/ryker/discussao.json ilegível (${stateRead.error}). Não vou sobrescrever; corrija ou apague o arquivo.`,
           "error",
         );
         return;
@@ -131,13 +131,13 @@ export function registerCommand(pi: ExtensionAPI): void {
         if (!ctx.hasUI) return;
         const archive = await ctx.ui.confirm(
           "Arquivar a discussão aprovada?",
-          "Ela será movida para .ryker/arquivo/ e passa a contar como decisão existente.",
+          "Ela será movida para o histórico do Ryker (~/.pi/agent/ryker/history/) e passa a contar como decisão existente.",
         );
         if (!archive) {
           ctx.ui.notify("Discussão Global cancelada.", "info");
           return;
         }
-        const folder = archiveApproved(ctx.cwd, existing);
+        const folder = archiveApproved(ctx.cwd, existing, projectHistory(ctx.cwd));
         ctx.ui.notify(`Discussão arquivada em ${folder}.`, "info");
       }
       if (!request) {

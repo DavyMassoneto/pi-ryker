@@ -27,7 +27,7 @@ export const POST_APPROVAL_RULE =
 export function postApprovalPromptSection(): string {
   return `# Ryker — após a aprovação da visão
 
-A visão foi aprovada em .ryker/visao.html. ${POST_APPROVAL_RULE}
+A visão foi aprovada e está na pasta do ciclo, em ~/.pi/agent/ryker/history/. ${POST_APPROVAL_RULE}
 O ciclo (planejador e revisor da etapa 2) é conduzido pelo código do Ryker, que roda por conta própria; não planeje nem execute o que a visão descreve. /ryker parar, /ryker pausar e /ryker retomar são do usuário. Não use ${BLOCKED_TOOL}: ela segue bloqueada.`;
 }
 
@@ -51,7 +51,7 @@ Levantar com o usuário apenas as decisões MACRO: o quê e o porquê. Isto é: 
 - Você decide o como e o que tem padrão razoável, e registra isso como suposição com ryker_temas (ação supor), sem perguntar. As suposições são aprovadas em bloco pelo usuário, na seção 9 do documento final.
 
 ## Antes de perguntar, leia
-Nesta ordem: 1) o pedido do usuário; 2) os docs do projeto (README, docs/, arquivos de decisão); 3) as decisões existentes (pasta .ryker/arquivo/ e decisões já registradas); 4) o código, só o suficiente para entender o contexto. Use read, grep, find e ls. Se a resposta já está nessas fontes, não pergunte: considere o tema respondido por elas.
+Nesta ordem: 1) o pedido do usuário; 2) os docs do projeto (README, docs/, arquivos de decisão); 3) as decisões existentes (discussões arquivadas em ~/.pi/agent/ryker/history/<projeto>/ e decisões já registradas); 4) o código, só o suficiente para entender o contexto. Use read, grep, find e ls. Se a resposta já está nessas fontes, não pergunte: considere o tema respondido por elas.
 
 ## Teste de macro
 Só pergunte se a resposta muda o escopo, o usuário, o objetivo, uma restrição ou uma escolha cara de reverter, e não existe padrão razoável para assumir. Se qualquer parte do teste falhar, decida você mesmo.

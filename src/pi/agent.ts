@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import {
   type BashOperations,
@@ -7,10 +8,14 @@ import {
   DefaultResourceLoader,
   type ExtensionFactory,
   getAgentDir,
+  loadSkillsFromDir,
   SessionManager,
+  type Skill,
 } from "@earendil-works/pi-coding-agent";
 import type { Thinking } from "../core/cycleConfig.ts";
+import { replaceProjectContextFiles, replaceProjectSkills } from "../core/stageEnvironment.ts";
 import { trackShell } from "./processes.ts";
+import type { StageEnvironment } from "./stageEnvironment.ts";
 
 export const AGENT_TOOLS = ["read", "grep", "find", "ls", "write", "edit", "bash"];
 
@@ -29,12 +34,17 @@ export interface ChildSession {
   getLastAssistantText(): string | undefined;
 }
 
+export interface ContinuationHooks {
+  requestNewSession(): void;
+}
+
 export interface SessionRequest {
   cwd: string;
   sessionDir: string;
   model: Model<Api> | undefined;
   thinking: Thinking | undefined;
   guard: ExtensionFactory;
+  environment: StageEnvironment | undefined;
   shellEnv: Record<string, string>;
   shellOperations: BashOperations;
 }
@@ -45,7 +55,8 @@ export interface AgentRunRequest {
   executionDir: string;
   model: Model<Api> | undefined;
   thinking: Thinking | undefined;
-  guard: ExtensionFactory;
+  guard: (continuation: ContinuationHooks) => ExtensionFactory;
+  environment?: StageEnvironment;
   shellEnv: Record<string, string>;
   signal: AbortSignal;
 }
@@ -63,7 +74,42 @@ export interface AgentDeps {
   baseOperations(): BashOperations;
 }
 
+type LoaderOptions = ConstructorParameters<typeof DefaultResourceLoader>[0];
+
 const NO_USAGE: TokenUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+const FINAL_BRANCH_SOURCE = "ryker-final-branch";
+
+const addTokens = (a: TokenUsage, b: TokenUsage): TokenUsage => ({
+  input: a.input + b.input,
+  output: a.output + b.output,
+  cacheRead: a.cacheRead + b.cacheRead,
+  cacheWrite: a.cacheWrite + b.cacheWrite,
+});
+
+function finalBranchSkills(environment: StageEnvironment): Skill[] {
+  return environment.skillFolders
+    .filter((dir) => existsSync(dir))
+    .flatMap((dir) => loadSkillsFromDir({ dir, source: FINAL_BRANCH_SOURCE }).skills);
+}
+
+function environmentOverrides(
+  environment: StageEnvironment | undefined,
+): Pick<LoaderOptions, "skillsOverride" | "agentsFilesOverride"> {
+  if (!environment) return {};
+  return {
+    skillsOverride: (base) => ({
+      skills: replaceProjectSkills(base.skills, finalBranchSkills(environment)),
+      diagnostics: base.diagnostics,
+    }),
+    agentsFilesOverride: (base) => ({
+      agentsFiles: replaceProjectContextFiles(
+        base.agentsFiles,
+        environment.gitRoot,
+        environment.contextFiles,
+      ),
+    }),
+  };
+}
 
 async function createChildSession(request: SessionRequest): Promise<ChildSession> {
   const agentDir = getAgentDir();
@@ -72,6 +118,7 @@ async function createChildSession(request: SessionRequest): Promise<ChildSession
     agentDir,
     noExtensions: true,
     extensionFactories: [request.guard],
+    ...environmentOverrides(request.environment),
   });
   await resourceLoader.reload();
   const bash = createBashToolDefinition(request.cwd, {
@@ -102,42 +149,63 @@ export async function runChildAgent(
 ): Promise<AgentRunResult> {
   const tracker = trackShell(deps.baseOperations());
   let session: ChildSession | undefined;
+  let usage = NO_USAGE;
+  let text = "";
   const abort = (): void => {
     tracker.abortAll();
     void session?.abort();
   };
+  const closeSession = (): void => {
+    if (!session) return;
+    usage = addTokens(usage, session.getSessionStats().tokens);
+    text = session.getLastAssistantText() ?? text;
+    session.dispose();
+    session = undefined;
+  };
+  request.signal.addEventListener("abort", abort, { once: true });
   try {
-    session = await deps.createSession({
-      cwd: request.cwd,
-      sessionDir: request.executionDir,
-      model: request.model,
-      thinking: request.thinking,
-      guard: request.guard,
-      shellEnv: request.shellEnv,
-      shellOperations: tracker.operations,
-    });
-    request.signal.addEventListener("abort", abort, { once: true });
-    if (request.signal.aborted) abort();
-    await session.prompt(request.prompt);
+    let continueInNewSession = true;
+    while (continueInNewSession && !request.signal.aborted) {
+      continueInNewSession = false;
+      const hooks: ContinuationHooks = {
+        requestNewSession: () => {
+          continueInNewSession = true;
+          void session?.abort();
+        },
+      };
+      session = await deps.createSession({
+        cwd: request.cwd,
+        sessionDir: request.executionDir,
+        model: request.model,
+        thinking: request.thinking,
+        guard: request.guard(hooks),
+        environment: request.environment,
+        shellEnv: request.shellEnv,
+        shellOperations: tracker.operations,
+      });
+      try {
+        await session.prompt(request.prompt);
+      } catch (e) {
+        if (!continueInNewSession) throw e;
+      }
+      closeSession();
+    }
     const leftoverCommands = tracker.running();
     tracker.abortAll();
-    return {
-      text: session.getLastAssistantText() ?? "",
-      aborted: request.signal.aborted,
-      leftoverCommands,
-      usage: session.getSessionStats().tokens,
-    };
+    return { text, aborted: request.signal.aborted, leftoverCommands, usage };
   } catch (e) {
+    const leftoverCommands = tracker.running();
+    closeSession();
     return {
-      text: session?.getLastAssistantText() ?? "",
+      text,
       aborted: request.signal.aborted,
       error: (e as Error).message,
-      leftoverCommands: tracker.running(),
-      usage: session?.getSessionStats().tokens ?? NO_USAGE,
+      leftoverCommands,
+      usage,
     };
   } finally {
     request.signal.removeEventListener("abort", abort);
     tracker.abortAll();
-    session?.dispose();
+    closeSession();
   }
 }

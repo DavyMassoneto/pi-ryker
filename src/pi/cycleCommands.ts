@@ -8,6 +8,7 @@ import {
   defaultHostDeps,
   type HostDeps,
   type HostMessenger,
+  takeOverCycle,
 } from "./cycleHost.ts";
 import { projectSessionView } from "./projectSession.ts";
 
@@ -34,6 +35,19 @@ async function apply(command: CycleCommand, handle: CycleHandle): Promise<string
   return resumed.ok ? commandReply("resumed", language) : resumed.reason;
 }
 
+async function takeOver(
+  ctx: ExtensionContext,
+  messenger: HostMessenger,
+  deps: HostDeps,
+): Promise<string> {
+  const taken = await takeOverCycle(messenger, ctx, deps);
+  if (!taken.ok) return taken.message;
+  const resumed = await taken.handle.driver.resume();
+  return resumed.ok
+    ? commandReply("tookOver", taken.handle.driver.record().language)
+    : resumed.reason;
+}
+
 export async function runCycleCommand(
   subcommand: string,
   ctx: ExtensionContext,
@@ -45,6 +59,7 @@ export async function runCycleCommand(
   const handle = cycleHandles.get(sessionId) ?? attachExistingCycle(messenger, ctx, deps);
   if (!handle || !command) {
     const view = projectSessionView(ctx.cwd, sessionId, deps.agentDir);
+    if (view.role === "reader" && command === "resume") return takeOver(ctx, messenger, deps);
     return commandReply(view.role === "reader" ? "readerOnly" : "noCycle", view.record?.language);
   }
   const record = handle.driver.record();

@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { parseCycleRecord } from "../core/cycleRecord.ts";
+import type { RestorePoint } from "../core/gitRefs.ts";
+import { lockPath } from "../core/lock.ts";
 import { createState } from "../core/state.ts";
 import type { AgentRunRequest } from "./agent.ts";
 import {
@@ -12,7 +14,9 @@ import {
   type HostContext,
   type HostDeps,
   startStageTwo,
+  takeOverCycle,
 } from "./cycleHost.ts";
+import type { RepositoryPort } from "./repository.ts";
 
 interface Fixture {
   project: string;
@@ -21,10 +25,40 @@ interface Fixture {
   notices: string[];
   messages: string[];
   requests: AgentRunRequest[];
+  repo: { branch: string | undefined; restored: string[] };
   deps: HostDeps;
   ctx: HostContext;
   messenger: { sendMessage: (m: { content: string }) => void };
   cleanup(): void;
+}
+
+function fakeRepository(
+  project: string,
+  repo: { branch: string | undefined; restored: string[] },
+): RepositoryPort {
+  const point = (label: string): RestorePoint => ({
+    ref: `refs/ryker/x/${label}`,
+    commit: "c",
+    tree: "t",
+    indexTree: "i",
+    branch: "main",
+    head: "h",
+  });
+  return {
+    currentBranch: () => repo.branch,
+    workspace: () => ({
+      capture: point,
+      verify: () => ({ ok: true }),
+      restore: (restored) => void repo.restored.push(restored.ref),
+    }),
+    stageEnvironment: (request) => ({
+      branch: request.branch,
+      gitRoot: project,
+      contextFiles: [{ path: join(project, "AGENTS.md"), content: "from the final branch" }],
+      skillFolders: [],
+      agentDefinitions: [],
+    }),
+  };
 }
 
 function fixture(options: { git?: boolean; config?: boolean; sessionId?: string } = {}): Fixture {
@@ -45,7 +79,12 @@ function fixture(options: { git?: boolean; config?: boolean; sessionId?: string 
   const notices: string[] = [];
   const messages: string[] = [];
   const requests: AgentRunRequest[] = [];
+  const repo: { branch: string | undefined; restored: string[] } = {
+    branch: "main",
+    restored: [],
+  };
   const deps: HostDeps = {
+    repository: () => fakeRepository(project, repo),
     agentDir,
     now: () => 1_000_000,
     heartbeatMs: 3_600_000,
@@ -81,6 +120,7 @@ function fixture(options: { git?: boolean; config?: boolean; sessionId?: string 
     notices,
     messages,
     requests,
+    repo,
     deps,
     ctx,
     messenger: { sendMessage: (m) => void messages.push(m.content) },
@@ -199,5 +239,119 @@ test("host: the owner session re-attaches a paused cycle after a restart", async
   const attached = attachExistingCycle(f.messenger, f.ctx, f.deps);
   assert.equal(attached?.driver.record().runState, "paused");
   await attached?.shutdown();
+  f.cleanup();
+});
+
+test("host: refuses a detached HEAD, the final branch must be checked out (S7, Mec8)", async () => {
+  const f = fixture();
+  f.repo.branch = undefined;
+  const result = await startStageTwo(f.messenger, f.ctx, discussion(), f.deps);
+  assert.match(result.ok ? "" : result.message, /detached HEAD/);
+  f.cleanup();
+});
+
+test("host: the vision moves to the cycle history folder and the agents read it there (P45)", async () => {
+  const f = fixture();
+  writeFileSync(join(f.project, ".pi", "ryker", "visao.html"), "<html>vision</html>");
+  await startStageTwo(f.messenger, f.ctx, discussion(), f.deps);
+  const handle = cycleHandles.get("session-a");
+  await handle?.running;
+  const record = parseCycleRecord(
+    readFileSync(join(f.project, ".pi", "ryker", "ciclo.json"), "utf8"),
+  );
+  assert.equal(existsSync(join(f.project, ".pi", "ryker", "visao.html")), false);
+  assert.match(f.requests[0]?.prompt ?? "", /history.*visao\.html/);
+  assert.equal(record?.finalBranch, "main");
+  await handle?.shutdown();
+  f.cleanup();
+});
+
+test("host: children get the final-branch environment read at the stage start (S7)", async () => {
+  const f = fixture();
+  await startStageTwo(f.messenger, f.ctx, discussion(), f.deps);
+  const handle = cycleHandles.get("session-a");
+  await handle?.running;
+  assert.equal(f.requests[0]?.environment?.contextFiles[0]?.content, "from the final branch");
+  await handle?.shutdown();
+  f.cleanup();
+});
+
+function liveForeignCycle(f: Fixture, execution?: { restorePoint: RestorePoint }): void {
+  const record = {
+    version: 1,
+    cycleId: "c-old",
+    ownerSession: "session-old",
+    epoch: 3,
+    runState: "running",
+    cycle: { stage: 2, round: 1, phase: "reviewing" },
+    tokens: [],
+    directories: [f.project],
+    attempt: 1,
+    finalBranch: "main",
+    ...(execution ? { execution } : {}),
+  };
+  writeFileSync(join(f.project, ".pi", "ryker", "ciclo.json"), JSON.stringify(record));
+  writeFileSync(
+    lockPath(f.project),
+    JSON.stringify({
+      ownerSession: "session-old",
+      cycleId: "c-old",
+      epoch: 3,
+      heartbeatAt: 1_000_000,
+    }),
+  );
+  mkdirSync(join(f.agentDir, "ryker"), { recursive: true });
+  writeFileSync(
+    join(f.agentDir, "ryker", "ciclos-abertos.json"),
+    JSON.stringify([{ cycleId: "c-old", ownerSession: "session-old", directories: [f.project] }]),
+  );
+}
+
+test("host: taking over a live owner needs confirmation, bumps the epoch and discards the running execution (P35, 18.11)", async () => {
+  const f = fixture({ sessionId: "session-b" });
+  const point: RestorePoint = {
+    ref: "refs/ryker/c-old/run",
+    commit: "c",
+    tree: "t",
+    indexTree: "i",
+    branch: "main",
+    head: "h",
+  };
+  liveForeignCycle(f, { restorePoint: point });
+  const refused = await takeOverCycle(
+    f.messenger,
+    { ...f.ctx, ui: { ...f.ctx.ui, confirm: async () => false } },
+    f.deps,
+  );
+  assert.equal(refused.ok, false);
+  assert.equal(JSON.parse(readFileSync(lockPath(f.project), "utf8")).ownerSession, "session-old");
+  const taken = await takeOverCycle(
+    f.messenger,
+    { ...f.ctx, ui: { ...f.ctx.ui, confirm: async () => true } },
+    f.deps,
+  );
+  assert.equal(taken.ok, true);
+  const lock = JSON.parse(readFileSync(lockPath(f.project), "utf8"));
+  assert.equal(lock.ownerSession, "session-b");
+  assert.equal(lock.epoch, 4);
+  const record = parseCycleRecord(
+    readFileSync(join(f.project, ".pi", "ryker", "ciclo.json"), "utf8"),
+  );
+  assert.equal(record?.ownerSession, "session-b");
+  assert.equal(record?.runState, "paused");
+  assert.equal(record?.cycle.phase, "planning");
+  assert.equal(record?.execution, undefined);
+  assert.deepEqual(f.repo.restored, ["refs/ryker/c-old/run"]);
+  const index = JSON.parse(readFileSync(join(f.agentDir, "ryker", "ciclos-abertos.json"), "utf8"));
+  assert.equal(index[0].ownerSession, "session-b");
+  if (taken.ok) await taken.handle.shutdown();
+  f.cleanup();
+});
+
+test("host: taking over without a dialog is refused while the owner is alive (P35)", async () => {
+  const f = fixture({ sessionId: "session-b" });
+  liveForeignCycle(f);
+  const result = await takeOverCycle(f.messenger, { ...f.ctx, hasUI: false }, f.deps);
+  assert.match(result.ok ? "" : result.message, /confirmation/);
   f.cleanup();
 });

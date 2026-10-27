@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
-import { type AgentDeps, type AgentRunRequest, type ChildSession, runChildAgent } from "./agent.ts";
+import {
+  type AgentDeps,
+  type AgentRunRequest,
+  type ChildSession,
+  type ContinuationHooks,
+  runChildAgent,
+} from "./agent.ts";
 
 const request = (signal: AbortSignal): AgentRunRequest => ({
   cwd: "/p",
@@ -9,7 +15,7 @@ const request = (signal: AbortSignal): AgentRunRequest => ({
   executionDir: "/p/run",
   model: undefined,
   thinking: undefined,
-  guard: () => {},
+  guard: () => () => {},
   shellEnv: {},
   signal,
 });
@@ -113,4 +119,49 @@ test("agent: commands still running when the agent ends are counted and ended (C
   const result = await runChildAgent(request(new AbortController().signal), deps);
   assert.equal(result.leftoverCommands, 1);
   await assert.rejects(started, /aborted/);
+});
+
+test("agent: progress that no longer fits continues in a new session with the same fixed text (Q Continuacao em sessao nova, U21)", async () => {
+  const prompts: string[] = [];
+  let created = 0;
+  let aborted = 0;
+  const deps: AgentDeps = {
+    baseOperations: () => noShell,
+    createSession: async () => {
+      created += 1;
+      const first = created === 1;
+      return {
+        prompt: async (text) => {
+          prompts.push(text);
+          if (first) {
+            continuation?.requestNewSession();
+            throw new Error("aborted for continuation");
+          }
+        },
+        abort: async () => {
+          aborted += 1;
+        },
+        dispose: () => {},
+        getSessionStats: () => ({ tokens: { input: 10, output: 1, cacheRead: 0, cacheWrite: 0 } }),
+        getLastAssistantText: () => (first ? "partial" : "STATUS: DONE"),
+      };
+    },
+  };
+  let continuation: ContinuationHooks | undefined;
+  const result = await runChildAgent(
+    {
+      ...request(new AbortController().signal),
+      guard: (hooks) => {
+        continuation = hooks;
+        return () => {};
+      },
+    },
+    deps,
+  );
+  assert.equal(created, 2);
+  assert.deepEqual(prompts, ["FIXED TEXT", "FIXED TEXT"]);
+  assert.equal(aborted, 1);
+  assert.equal(result.error, undefined);
+  assert.equal(result.text, "STATUS: DONE");
+  assert.deepEqual(result.usage, { input: 20, output: 2, cacheRead: 0, cacheWrite: 0 });
 });

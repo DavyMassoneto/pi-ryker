@@ -41,6 +41,46 @@ export function agentChangeNote(paths: readonly string[], language?: string): st
     : `The agent changed control files (${paths.join(", ")}): restored, round failed.`;
 }
 
+export function workspaceChangeNote(reason: string, language?: string): string {
+  return isPortuguese(language)
+    ? `O agente mudou o projeto, a branch ou o HEAD (${reason}): desfeito pelo ponto de restauração, rodada reprovada.`
+    : `The agent changed the project, the branch or HEAD (${reason}): undone from the restore point, round failed.`;
+}
+
+export interface CancelQuestion {
+  title: string;
+  stuck: string;
+  other: string;
+}
+
+export function cancelQuestion(language?: string): CancelQuestion {
+  return isPortuguese(language)
+    ? {
+        title: "A execução foi cancelada. Por quê?",
+        stuck: "Travou (conta como rodada reprovada)",
+        other: "Cancelei por outro motivo (não conta)",
+      }
+    : {
+        title: "The execution was cancelled. Why?",
+        stuck: "It was stuck (counts as a failed round)",
+        other: "Cancelled for another reason (does not count)",
+      };
+}
+
+export function takeoverQuestion(language?: string): { title: string; message: string } {
+  return isPortuguese(language)
+    ? {
+        title: "Assumir o ciclo do Ryker?",
+        message:
+          "Outra sessão conduz este ciclo e está viva. Assumir cancela e descarta a execução em curso, sem contar rodada.",
+      }
+    : {
+        title: "Take over the Ryker cycle?",
+        message:
+          "Another live session drives this cycle. Taking over cancels and discards the running execution without counting a round.",
+      };
+}
+
 export function leftoverProcessesNote(count: number, language?: string): string {
   return isPortuguese(language)
     ? `${count} comando(s) do agente ainda rodavam ao fim da execução: encerrados, rodada reprovada.`
@@ -53,7 +93,13 @@ export function leaseLostNote(language?: string): string {
     : "Another session took over this cycle; this driver stopped without writing anything else.";
 }
 
-export type CommandReply = "stopping" | "pauseDeferred" | "resumed" | "noCycle" | "readerOnly";
+export type CommandReply =
+  | "stopping"
+  | "pauseDeferred"
+  | "resumed"
+  | "noCycle"
+  | "readerOnly"
+  | "tookOver";
 
 const COMMAND_REPLIES: Record<CommandReply, { pt: string; en: string }> = {
   stopping: {
@@ -73,8 +119,12 @@ const COMMAND_REPLIES: Record<CommandReply, { pt: string; en: string }> = {
     en: "There is no open Ryker cycle in this project.",
   },
   readerOnly: {
-    pt: "Este ciclo pertence a outra sessão; aqui só é possível ver o status.",
-    en: "This cycle belongs to another session; here you can only see its status.",
+    pt: "Este ciclo pertence a outra sessão; aqui só é possível ver o status ou assumir com /ryker retomar.",
+    en: "This cycle belongs to another session; here you can only see its status or take it over with /ryker retomar.",
+  },
+  tookOver: {
+    pt: "Ciclo assumido por esta sessão; a execução da sessão anterior foi descartada sem contar rodada.",
+    en: "This session took the cycle over; the previous session's execution was discarded without counting a round.",
   },
 };
 

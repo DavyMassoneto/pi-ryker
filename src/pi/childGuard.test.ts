@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type ChildGuardDeps, childGuardFactory } from "./childGuard.ts";
 
-type Handler = (event: unknown) => Promise<unknown>;
+type Handler = (event: unknown, ctx?: unknown) => Promise<unknown>;
 
 function install(deps: ChildGuardDeps): Map<string, Handler> {
   const handlers = new Map<string, Handler>();
@@ -14,6 +14,7 @@ function install(deps: ChildGuardDeps): Map<string, Handler> {
 }
 
 const root = resolve("/proj");
+const SETTINGS = { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 };
 const deps = (overrides: Partial<ChildGuardDeps> = {}): ChildGuardDeps => ({
   policy: { role: "reviewer", allowed: [resolve(root, "revisao.md")] },
   shell: () => ({
@@ -26,6 +27,8 @@ const deps = (overrides: Partial<ChildGuardDeps> = {}): ChildGuardDeps => ({
   epochStillMine: () => true,
   progressPath: resolve(root, "progresso.md"),
   readFile: () => "## Coverage\n- Tasks",
+  fixedText: "FIXED TEXT",
+  continuation: { requestNewSession: () => {} },
   ...overrides,
 });
 
@@ -64,9 +67,12 @@ test("child guard adapter: a throwing dependency fails closed (R2-N7)", async ()
 
 test("child guard adapter: compaction summary is the whole progress file", async () => {
   const handlers = install(deps());
-  const result = (await handlers.get("session_before_compact")?.({
-    preparation: { firstKeptEntryId: "e9", tokensBefore: 1234 },
-  })) as { compaction: { summary: string; firstKeptEntryId: string; tokensBefore: number } };
+  const result = (await handlers.get("session_before_compact")?.(
+    {
+      preparation: { firstKeptEntryId: "e9", tokensBefore: 1234, settings: SETTINGS },
+    },
+    { model: { contextWindow: 200_000 } },
+  )) as { compaction: { summary: string; firstKeptEntryId: string; tokensBefore: number } };
   assert.deepEqual(result.compaction, {
     summary: "## Coverage\n- Tasks",
     firstKeptEntryId: "e9",
@@ -76,8 +82,31 @@ test("child guard adapter: compaction summary is the whole progress file", async
 
 test("child guard adapter: an empty progress file leaves default compaction", async () => {
   const handlers = install(deps({ readFile: () => undefined }));
-  const result = await handlers.get("session_before_compact")?.({
-    preparation: { firstKeptEntryId: "e9", tokensBefore: 1 },
-  });
+  const result = await handlers.get("session_before_compact")?.(
+    {
+      preparation: { firstKeptEntryId: "e9", tokensBefore: 1, settings: SETTINGS },
+    },
+    { model: undefined },
+  );
   assert.equal(result, undefined);
+});
+
+test("child guard adapter: progress that does not fit cancels compaction and asks for a new session (Q Continuacao em sessao nova)", async () => {
+  let requested = 0;
+  const handlers = install(
+    deps({
+      readFile: () => "x".repeat(400_000),
+      continuation: {
+        requestNewSession: () => {
+          requested += 1;
+        },
+      },
+    }),
+  );
+  const result = await handlers.get("session_before_compact")?.(
+    { preparation: { firstKeptEntryId: "e9", tokensBefore: 1, settings: SETTINGS } },
+    { model: { contextWindow: 128_000 } },
+  );
+  assert.deepEqual(result, { cancel: true });
+  assert.equal(requested, 1);
 });

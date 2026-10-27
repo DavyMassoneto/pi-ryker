@@ -14,10 +14,12 @@ import {
   leftoverProcessesNote,
   outsideChangeNote,
   stageSummary,
+  workspaceChangeNote,
 } from "../core/cycleMessages.ts";
 import {
   type AgentRole,
   executionDir,
+  executionLabel,
   planPath,
   progressPath,
   reviewPath,
@@ -25,6 +27,7 @@ import {
 } from "../core/cyclePaths.ts";
 import type { CycleRecord } from "../core/cycleRecord.ts";
 import { missingCoverage, parseReview } from "../core/findings.ts";
+import type { RestorePoint } from "../core/gitRefs.ts";
 import { validatePlan } from "../core/plan.ts";
 import {
   buildPlannerPrompt,
@@ -38,6 +41,14 @@ import type { AgentRunResult } from "./agent.ts";
 import type { Lease } from "./lease.ts";
 
 export type ControlSnapshot = Record<string, string>;
+export type CancelReason = "stuck" | "other";
+export type WorkspaceCheck = { ok: true } | { ok: false; reason: string };
+
+export interface WorkspacePort {
+  capture(label: string): RestorePoint;
+  verify(point: RestorePoint): WorkspaceCheck;
+  restore(point: RestorePoint): void;
+}
 
 export interface DriverPorts {
   cycleDir: string;
@@ -52,6 +63,8 @@ export interface DriverPorts {
     snapshot(extraPaths: readonly string[]): ControlSnapshot;
     restore(before: ControlSnapshot, after: ControlSnapshot): void;
   };
+  workspace: WorkspacePort;
+  askCancelReason(): Promise<CancelReason | undefined>;
   runAgent(
     role: AgentRole,
     prompt: string,
@@ -73,6 +86,7 @@ export interface StageDriver {
   isExecuting(): boolean;
   run(): Promise<void>;
   stop(): void;
+  suspend(): void;
   requestPause(): void;
   resume(): Promise<{ ok: true } | { ok: false; reason: string }>;
   leaseLost(): void;
@@ -86,6 +100,7 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
   let looping = false;
   let pauseRequested = false;
   let lost = false;
+  let askAfterCancel = false;
   let controller: AbortController | undefined;
   let lastManifest: Manifest | undefined;
   let lastSnapshot: ControlSnapshot | undefined;
@@ -114,15 +129,30 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
     return true;
   };
 
-  const enterPause = (note?: string): void => {
+  const withoutExecution = (from: CycleRecord): CycleRecord => {
+    const { execution: _execution, ...rest } = from;
+    return rest;
+  };
+
+  const enterPause = (extra: Partial<CycleRecord> = {}): void => {
     const phase = record.cycle.phase === "reviewing" ? "planning" : record.cycle.phase;
     commit({
-      ...record,
+      ...withoutExecution(record),
       runState: "paused",
       cycle: { ...record.cycle, phase },
-      ...(note ? { note } : {}),
+      ...extra,
     });
-    if (note) ports.notify(note, "warning");
+    if (extra.note) ports.notify(extra.note, "warning");
+  };
+
+  const answerCancelQuestion = async (): Promise<boolean> => {
+    const answer = await ports.askCancelReason();
+    if (answer === undefined || lost) return false;
+    const { cancelQuestion: _asked, ...answered } = record;
+    if (answer === "other") return commit(answered);
+    record = answered;
+    applyEvent({ type: "codeCheckFailed" });
+    return true;
   };
 
   const closeCycle = (closed: "stageNotBuilt" | "backToDiscussion"): void => {
@@ -168,15 +198,24 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
     ports.files.ensureDir(dir);
     ports.files.write(templatePath(dir, "plan"), PLAN_TEMPLATE);
     ports.files.write(templatePath(dir, "review"), REVIEW_TEMPLATE);
-    const before = ports.control.snapshot(extraControl);
     const outside = lastManifest
       ? diffManifests(lastManifest, buildManifest(ports.control.snapshot([])))
       : undefined;
     const outsideDecision = outside ? evaluateControlChange(outside, "outside") : undefined;
     if (outsideDecision?.action === "stop") {
-      enterPause(outsideChangeNote(outsideDecision.paths, noticeLanguage));
+      enterPause({ note: outsideChangeNote(outsideDecision.paths, noticeLanguage) });
       return "outside";
     }
+    const restorePoint = ports.workspace.capture(
+      executionLabel({
+        attempt: record.attempt,
+        stage: record.cycle.stage,
+        round: record.cycle.round,
+        role,
+      }),
+    );
+    if (!commit({ ...record, execution: { restorePoint } })) return "outside";
+    const controlBefore = ports.control.snapshot(extraControl);
     controller = new AbortController();
     executing = true;
     let result: AgentRunResult;
@@ -185,14 +224,29 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
     } finally {
       executing = false;
     }
+    if (lost || !ports.lease.epochStillMine()) {
+      return { result: { ...result, aborted: true }, dir, failedByCheck: false };
+    }
     const after = ports.control.snapshot(extraControl);
+    if (result.aborted) {
+      ports.control.restore(controlBefore, after);
+      ports.workspace.restore(restorePoint);
+      record = withoutExecution(record);
+      return { result, dir, failedByCheck: false };
+    }
     const decision = evaluateControlChange(
-      diffManifests(buildManifest(before), buildManifest(after)),
+      diffManifests(buildManifest(controlBefore), buildManifest(after)),
       "agent",
     );
     let failedByCheck = false;
+    const workspace = ports.workspace.verify(restorePoint);
+    if (!workspace.ok) {
+      ports.workspace.restore(restorePoint);
+      ports.notify(workspaceChangeNote(workspace.reason, noticeLanguage), "warning");
+      failedByCheck = true;
+    }
     if (decision.action === "restoreAndFail") {
-      ports.control.restore(before, after);
+      ports.control.restore(controlBefore, after);
       ports.notify(agentChangeNote(decision.paths, noticeLanguage), "warning");
       failedByCheck = true;
     }
@@ -204,6 +258,7 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
       ports.notify(result.error, "error");
       failedByCheck = true;
     }
+    record = withoutExecution(record);
     recordUsage(role, result);
     return { result, dir, failedByCheck };
   };
@@ -278,6 +333,8 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
     return "continue";
   };
 
+  const isStopped = (): boolean => record.cycle.phase === "stopped";
+
   const isActivePhase = (): boolean =>
     record.cycle.phase === "planning" || record.cycle.phase === "reviewing";
 
@@ -296,7 +353,11 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
         const outcome =
           record.cycle.phase === "planning" ? await planningStep() : await reviewingStep();
         if (outcome === "interrupted") {
-          if (!lost) enterPause();
+          if (lost) return;
+          const ask = askAfterCancel;
+          askAfterCancel = false;
+          enterPause(ask ? { cancelQuestion: true } : {});
+          if (ask) await answerCancelQuestion();
           return;
         }
         if (outcome === "halted") return;
@@ -310,7 +371,15 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
     record: () => record,
     isExecuting: () => executing,
     run,
-    stop: () => controller?.abort(),
+    stop: () => {
+      if (!executing) return;
+      askAfterCancel = true;
+      controller?.abort();
+    },
+    suspend: () => {
+      askAfterCancel = false;
+      controller?.abort();
+    },
     requestPause: () => {
       pauseRequested = true;
     },
@@ -322,9 +391,13 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
     resume: async () => {
       if (record.closed) return { ok: false, reason: "the cycle is already closed" };
       if (record.runState !== "paused") return { ok: false, reason: "the cycle is not paused" };
-      if (record.cycle.phase === "stopped") {
+      if (isStopped()) {
         return { ok: false, reason: "the cycle stopped; only the user can decide what comes next" };
       }
+      if (record.cancelQuestion && !(await answerCancelQuestion())) {
+        return { ok: false, reason: "answer whether the cancelled execution was stuck first" };
+      }
+      if (isStopped()) return { ok: true };
       void run();
       return { ok: true };
     },

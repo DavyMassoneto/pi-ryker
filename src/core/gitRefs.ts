@@ -12,6 +12,13 @@ export interface BranchHead {
   head: string;
 }
 
+export interface RestorePoint extends BranchHead {
+  ref: string;
+  commit: string;
+  tree: string;
+  indexTree: string;
+}
+
 export type BranchHeadCheck = { ok: true } | { ok: false; reason: string };
 
 const pad = (n: number): string => String(n).padStart(2, "0");

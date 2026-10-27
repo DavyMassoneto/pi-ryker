@@ -4,14 +4,22 @@ import { parseCycleConfig } from "../core/cycleConfig.ts";
 import { configPath, cycleRecordPath, openCyclesIndexPath } from "../core/cyclePaths.ts";
 import { type CycleRecord, parseCycleRecord } from "../core/cycleRecord.ts";
 import { readerStatus } from "../core/cycleView.ts";
+import { withoutNeutralizedSkills } from "../core/neutralization.ts";
 import { cyclesTouching } from "../core/openCycles.ts";
 import { decideProjectSessionCall } from "../core/ownerRules.ts";
 import { buildOwnerNotice } from "../core/prompts.ts";
 import type { SessionRole } from "../core/session.ts";
 import { createSessionRegistry } from "../core/sessionRegistry.ts";
 import type { ShellContext } from "../core/shielding.ts";
-import { attachExistingCycle, cycleHandles, defaultHostDeps, type HostDeps } from "./cycleHost.ts";
+import {
+  attachExistingCycle,
+  cycleHandles,
+  defaultHostDeps,
+  type HostDeps,
+  projectHistory,
+} from "./cycleHost.ts";
 import { readGitAliases, readOpenCycles, readText } from "./fsAdapters.ts";
+import { migrateLegacyFolder } from "./persistence.ts";
 
 export const CYCLE_PROMPT_SECTION = "ryker_ciclo";
 export const READER_STATUS_KEY = "ryker-leitor";
@@ -65,6 +73,9 @@ export function registerProjectSession(pi: ExtensionAPI, deps: HostDeps = defaul
   };
 
   pi.on("session_start", async (_event, ctx) => {
+    try {
+      migrateLegacyFolder(ctx.cwd, projectHistory(ctx.cwd, deps.agentDir));
+    } catch {}
     attachExistingCycle(pi, ctx, deps);
     refreshReader(ctx);
     const sessionId = ctx.sessionManager.getSessionId();
@@ -95,6 +106,7 @@ export function registerProjectSession(pi: ExtensionAPI, deps: HostDeps = defaul
     const view = projectSessionView(ctx.cwd, ctx.sessionManager.getSessionId(), deps.agentDir);
     if (view.role === "owner" && view.record?.runState === "running") {
       event.systemPromptOptions.sections[CYCLE_PROMPT_SECTION] = buildOwnerNotice();
+      event.systemPromptOptions.skills = withoutNeutralizedSkills(event.systemPromptOptions.skills);
     }
   });
 

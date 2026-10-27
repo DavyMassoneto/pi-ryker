@@ -1,6 +1,7 @@
 import type { CycleState } from "./cycle.ts";
 import { startCycle } from "./cycle.ts";
 import type { RunState } from "./cycleStates.ts";
+import type { RestorePoint } from "./gitRefs.ts";
 import type { Usage } from "./tokens.ts";
 
 export type CycleClosure = "stageNotBuilt" | "backToDiscussion";
@@ -18,6 +19,9 @@ export interface CycleRecord {
   language?: string;
   note?: string;
   closed?: CycleClosure;
+  finalBranch?: string;
+  execution?: { restorePoint: RestorePoint };
+  cancelQuestion?: boolean;
 }
 
 export interface NewRecordParams {
@@ -26,6 +30,7 @@ export interface NewRecordParams {
   epoch: number;
   directories: string[];
   language?: string;
+  finalBranch?: string;
 }
 
 export function newCycleRecord(p: NewRecordParams): CycleRecord {
@@ -40,6 +45,7 @@ export function newCycleRecord(p: NewRecordParams): CycleRecord {
     directories: p.directories,
     attempt: 1,
     ...(p.language ? { language: p.language } : {}),
+    ...(p.finalBranch ? { finalBranch: p.finalBranch } : {}),
   };
 }
 

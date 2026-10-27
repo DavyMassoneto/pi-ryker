@@ -1,4 +1,4 @@
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { hashContent } from "./controlFiles.ts";
 
 export type AgentRole = "planner" | "reviewer";
@@ -9,8 +9,11 @@ const pad = (n: number, width: number): string => String(n).padStart(width, "0")
 export const projectKey = (gitRoot: string): string =>
   `${basename(gitRoot)}-${hashContent(gitRoot).slice(0, HASH_LENGTH)}`;
 
+export const projectHistoryDir = (agentDir: string, gitRoot: string): string =>
+  join(agentDir, "ryker", "history", projectKey(gitRoot));
+
 export const cycleHistoryDir = (agentDir: string, gitRoot: string, cycleId: string): string =>
-  join(agentDir, "ryker", "history", projectKey(gitRoot), cycleId);
+  join(projectHistoryDir(agentDir, gitRoot), cycleId);
 
 export const openCyclesIndexPath = (agentDir: string): string =>
   join(agentDir, "ryker", "ciclos-abertos.json");
@@ -29,14 +32,22 @@ export interface ExecutionAddress {
   role: AgentRole;
 }
 
+const executionSegments = (a: ExecutionAddress): string[] => [
+  `tentativa-${pad(a.attempt, 3)}`,
+  `etapa-${a.stage}`,
+  `rodada-${pad(a.round, 3)}`,
+  `${a.role}-01`,
+];
+
 export const executionDir = (cycleDir: string, a: ExecutionAddress): string =>
-  join(
-    cycleDir,
-    `tentativa-${pad(a.attempt, 3)}`,
-    `etapa-${a.stage}`,
-    `rodada-${pad(a.round, 3)}`,
-    `${a.role}-01`,
-  );
+  join(cycleDir, ...executionSegments(a));
+
+export const executionLabel = (a: ExecutionAddress): string => executionSegments(a).join("/");
+
+export const stageDir = (cycleDir: string, attempt: number, stage: number): string =>
+  join(cycleDir, `tentativa-${pad(attempt, 3)}`, `etapa-${stage}`);
+
+export const stageDirOfExecution = (dir: string): string => dirname(dirname(dir));
 
 export const progressPath = (dir: string): string => join(dir, "progresso.md");
 export const reviewPath = (dir: string): string => join(dir, "revisao.md");

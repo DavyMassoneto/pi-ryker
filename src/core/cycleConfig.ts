@@ -1,3 +1,5 @@
+import { isAbsolute, win32 } from "node:path";
+
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type Thinking = (typeof THINKING_LEVELS)[number];
 
@@ -21,6 +23,10 @@ export interface CycleConfig {
   planner?: ModelChoice;
   reviewer?: ModelChoice;
 }
+
+const MAX_PORT = 65_535;
+
+const isAbsolutePath = (path: string): boolean => isAbsolute(path) || win32.isAbsolute(path);
 
 export type ConfigResult = { ok: true; config: CycleConfig } | { ok: false; problems: string[] };
 
@@ -52,6 +58,10 @@ function parsePiWeb(value: unknown, problems: string[]): PiWebAddress | undefine
     problems.push("piWeb needs hosts (list of strings) and port (number)");
     return undefined;
   }
+  if (!Number.isInteger(raw.port) || raw.port < 1 || raw.port > MAX_PORT) {
+    problems.push(`piWeb.port must be an integer from 1 to ${MAX_PORT}`);
+    return undefined;
+  }
   return { hosts: raw.hosts, port: raw.port };
 }
 
@@ -66,9 +76,20 @@ export function parseCycleConfig(text: string): ConfigResult {
   const allowedRoots = raw.allowedRoots ?? [];
   const owners = raw.owners ?? [];
   if (!isStringList(allowedRoots)) problems.push("allowedRoots must be a list of strings");
+  else {
+    const relative = allowedRoots.filter((root) => !isAbsolutePath(root));
+    if (relative.length > 0) {
+      problems.push(`allowedRoots must be absolute paths: ${relative.join(", ")}`);
+    }
+  }
   if (!isStringList(owners)) problems.push("owners must be a list of strings");
+  else if (owners.some((owner) => owner.trim() === "")) {
+    problems.push("owners must not contain empty names");
+  }
   if (raw.vaultPath !== undefined && typeof raw.vaultPath !== "string") {
     problems.push("vaultPath must be a string");
+  } else if (typeof raw.vaultPath === "string" && !isAbsolutePath(raw.vaultPath)) {
+    problems.push(`vaultPath must be an absolute path: ${raw.vaultPath}`);
   }
   if (raw.language !== undefined && typeof raw.language !== "string") {
     problems.push("language must be a string");

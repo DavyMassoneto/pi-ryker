@@ -41,3 +41,29 @@ test("config: rejects an unknown thinking level", () => {
   );
   assert.equal(result.ok, false);
 });
+
+test("config: hand-written paths must be absolute, with the offending value named (F1a, SUP-49, SUP-46)", () => {
+  const result = parseCycleConfig(
+    JSON.stringify({ vaultPath: "vault", allowedRoots: ["/ok", "rel/dir"], owners: ["core"] }),
+  );
+  assert.equal(result.ok, false);
+  const problems = result.ok ? "" : result.problems.join("\n");
+  assert.match(problems, /vaultPath must be an absolute path: vault/);
+  assert.match(problems, /allowedRoots must be absolute paths: rel\/dir/);
+});
+
+test("config: Windows absolute paths are accepted (F1a)", () => {
+  const result = parseCycleConfig(
+    JSON.stringify({ vaultPath: "C:\\vault", allowedRoots: ["D:\\data"], owners: ["core"] }),
+  );
+  assert.equal(result.ok, true);
+});
+
+test("config: pi-web port out of range and empty owner names are refused (P4, F1a)", () => {
+  const result = parseCycleConfig(
+    JSON.stringify({ owners: ["core", " "], piWeb: { hosts: ["127.0.0.1"], port: 70000 } }),
+  );
+  const problems = result.ok ? "" : result.problems.join("\n");
+  assert.match(problems, /piWeb\.port must be an integer from 1 to 65535/);
+  assert.match(problems, /owners must not contain empty names/);
+});

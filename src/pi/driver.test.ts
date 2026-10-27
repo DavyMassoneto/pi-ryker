@@ -6,8 +6,14 @@ import type { AgentRole } from "../core/cyclePaths.ts";
 import { planPath, progressPath, reviewPath } from "../core/cyclePaths.ts";
 import type { CycleRecord } from "../core/cycleRecord.ts";
 import { newCycleRecord } from "../core/cycleRecord.ts";
+import type { RestorePoint } from "../core/gitRefs.ts";
 import type { AgentRunResult } from "./agent.ts";
-import { createStageDriver, type DriverPorts } from "./driver.ts";
+import {
+  type CancelReason,
+  createStageDriver,
+  type DriverPorts,
+  type WorkspaceCheck,
+} from "./driver.ts";
 
 const CYCLE_DIR = join("/h", "cycle");
 const CONTROL = join("/p", ".pi", "ryker", "ciclo.json");
@@ -71,6 +77,8 @@ interface Harness {
   prompts: string[];
   control: Map<string, string>;
   lease: { mine: boolean };
+  workspace: { check: WorkspaceCheck; captured: string[]; restored: string[] };
+  cancel: { answer: CancelReason | undefined; asked: number };
 }
 
 function harness(script: Script): Harness {
@@ -82,6 +90,20 @@ function harness(script: Script): Harness {
   const closed: CycleRecord[] = [];
   const prompts: string[] = [];
   const lease = { mine: true };
+  const workspace = {
+    check: { ok: true } as WorkspaceCheck,
+    captured: [] as string[],
+    restored: [] as string[],
+  };
+  const cancel = { answer: undefined as CancelReason | undefined, asked: 0 };
+  const point = (label: string): RestorePoint => ({
+    ref: `refs/ryker/c1/${label}`,
+    commit: "c",
+    tree: "t",
+    indexTree: "i",
+    branch: "main",
+    head: "h",
+  });
   let round = 1;
   const ports: DriverPorts = {
     cycleDir: CYCLE_DIR,
@@ -101,6 +123,18 @@ function harness(script: Script): Harness {
       restore: (before) => {
         for (const [path, text] of Object.entries(before)) control.set(path, text);
       },
+    },
+    workspace: {
+      capture: (label) => {
+        workspace.captured.push(label);
+        return point(label);
+      },
+      verify: () => workspace.check,
+      restore: (restored) => void workspace.restored.push(restored.ref),
+    },
+    askCancelReason: async () => {
+      cancel.asked += 1;
+      return cancel.answer;
     },
     runAgent: async (role, prompt, dir) => {
       prompts.push(prompt);
@@ -127,7 +161,19 @@ function harness(script: Script): Harness {
     announce: (summary) => void announced.push(summary),
     onClosed: (record) => void closed.push(record),
   };
-  return { ports, fs, saved, notices, announced, closed, prompts, control, lease };
+  return {
+    ports,
+    fs,
+    saved,
+    notices,
+    announced,
+    closed,
+    prompts,
+    control,
+    lease,
+    workspace,
+    cancel,
+  };
 }
 
 const fresh = (): CycleRecord =>
@@ -376,4 +422,104 @@ test("driver: losing the lease mid-run aborts the agent and freezes the record",
   driver.leaseLost();
   await running;
   assert.equal(h.saved.length, savesBefore);
+});
+
+const abortable =
+  (h: Harness): DriverPorts["runAgent"] =>
+  (_role, _prompt, _dir, _progress, signal) =>
+    new Promise((resolve) => {
+      signal.addEventListener("abort", () =>
+        resolve({
+          text: "",
+          aborted: true,
+          leftoverCommands: 0,
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        }),
+      );
+      void h;
+    });
+
+async function stopMidRun(h: Harness) {
+  h.ports.runAgent = abortable(h);
+  const driver = createStageDriver(fresh(), h.ports);
+  const running = driver.run();
+  await new Promise((resolve) => setImmediate(resolve));
+  driver.stop();
+  await running;
+  return driver;
+}
+
+test("driver: a restore point is taken before each agent run and recorded until it ends (Mec9, C13.2)", async () => {
+  const h = harness(writeApprovedReview);
+  await createStageDriver(fresh(), h.ports).run();
+  assert.deepEqual(h.workspace.captured, [
+    "tentativa-001/etapa-2/rodada-001/planner-01",
+    "tentativa-001/etapa-2/rodada-001/reviewer-01",
+  ]);
+  const during = h.saved.find((record) => record.execution !== undefined);
+  assert.equal(
+    during?.execution?.restorePoint.ref,
+    "refs/ryker/c1/tentativa-001/etapa-2/rodada-001/planner-01",
+  );
+  assert.equal(h.saved.at(-1)?.execution, undefined);
+});
+
+test("driver: a branch, HEAD or project change by the agent is undone and fails the round (P6, Mec7, P22)", async () => {
+  const h = harness(writeApprovedReview);
+  h.workspace.check = { ok: false, reason: "HEAD is x, expected h" };
+  const driver = createStageDriver(fresh(), h.ports);
+  await driver.run();
+  assert.equal(h.workspace.restored.length, 2);
+  assert.match(h.notices.join(" "), /HEAD is x, expected h/);
+  assert.equal(driver.record().cycle.phase, "stopped");
+});
+
+test("driver: Esc or parar cancels, restores the point and asks why; stuck counts a round (Q Esc pergunta)", async () => {
+  const h = harness(writeApprovedReview);
+  h.cancel.answer = "stuck";
+  const driver = await stopMidRun(h);
+  assert.equal(h.cancel.asked, 1);
+  assert.deepEqual(h.workspace.restored, [
+    "refs/ryker/c1/tentativa-001/etapa-2/rodada-001/planner-01",
+  ]);
+  assert.equal(driver.record().runState, "paused");
+  assert.equal(driver.record().cycle.round, 2);
+  assert.equal(driver.record().cancelQuestion, undefined);
+});
+
+test("driver: cancelled for another reason does not count a round (Q Esc pergunta)", async () => {
+  const h = harness(writeApprovedReview);
+  h.cancel.answer = "other";
+  const driver = await stopMidRun(h);
+  assert.equal(driver.record().cycle.round, 1);
+  assert.equal(driver.record().cancelQuestion, undefined);
+});
+
+test("driver: an unanswered cancel question stays pending and opens again on resume (Q Esc pergunta)", async () => {
+  const h = harness(writeApprovedReview);
+  const driver = await stopMidRun(h);
+  assert.equal(driver.record().cancelQuestion, true);
+  assert.equal((await driver.resume()).ok, false);
+  assert.equal(h.cancel.asked, 2);
+  h.cancel.answer = "other";
+  h.ports.runAgent = async () => ({
+    text: "",
+    aborted: true,
+    leftoverCommands: 0,
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  });
+  assert.equal((await driver.resume()).ok, true);
+  assert.equal(driver.record().cancelQuestion, undefined);
+});
+
+test("driver: suspend (session closing) cancels without asking (U18.18)", async () => {
+  const h = harness(writeApprovedReview);
+  h.ports.runAgent = abortable(h);
+  const driver = createStageDriver(fresh(), h.ports);
+  const running = driver.run();
+  await new Promise((resolve) => setImmediate(resolve));
+  driver.suspend();
+  await running;
+  assert.equal(h.cancel.asked, 0);
+  assert.equal(driver.record().runState, "paused");
 });

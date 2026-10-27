@@ -227,7 +227,7 @@ export function registerClosingTools(pi: ExtensionAPI): void {
       state = {
         ...state,
         fase: "aprovacao",
-        documento: { caminho: ".ryker/visao.html", geradoEm: now() },
+        documento: { caminho: ".pi/ryker/visao.html", geradoEm: now() },
       };
       saveState(pi, ctx.cwd, state);
       let pathWarning = "";

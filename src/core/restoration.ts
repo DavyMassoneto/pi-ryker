@@ -27,8 +27,8 @@ export function decideRestoration(
     : { action: "warn", state: file.state };
 }
 
-export function archivePath(state: DiscussionState): string {
+export function archiveName(state: DiscussionState): string {
   const data = (state.aprovadoEm ?? state.criadoEm).slice(0, 10);
   const name = slug(state.pedido).slice(0, 40).replace(/-+$/, "") || "discussao";
-  return `.ryker/arquivo/${data}-${name}`;
+  return `${data}-${name}`;
 }
