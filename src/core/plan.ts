@@ -78,8 +78,18 @@ const splitBar = (value: string): string[] =>
 
 const unifySlashes = (value: string): string => value.replace(/\\/g, "/");
 
+const gitBashDrive = (value: string): string =>
+  process.platform === "win32" ? value.replace(/^\/([A-Za-z])(?=\/|$)/, "$1:") : value;
+
 function canonicalRepository(value: string, base: string | undefined): string {
-  const unified = unifySlashes(value.trim());
+  const unified = gitBashDrive(
+    unifySlashes(
+      value
+        .trim()
+        .replace(/^`+|`+$/g, "")
+        .trim(),
+    ),
+  );
   const resolved =
     base !== undefined ? resolve(base, unified) : isAbsolute(unified) ? resolve(unified) : unified;
   const normalised = unifySlashes(isAbsolute(resolved) ? resolved : normalize(resolved));
@@ -90,7 +100,7 @@ function canonicalRepository(value: string, base: string | undefined): string {
 export function repositoriesText(repositories: readonly string[]): string {
   return [
     "# Cycle repositories",
-    "Every task's `- repository:` line must name one of these repositories, using the exact value in backticks.",
+    "Every task's `- repository:` line must name one of these repositories, using the value inside the backticks.",
     ...repositories.map((repository) => `- \`${repository}\``),
     ...(repositories.length === 1 ? ["- `.` (the same repository, relative form)"] : []),
     "",

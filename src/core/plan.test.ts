@@ -103,6 +103,16 @@ test("repository is normalised before the comparison (B12)", () => {
   assert.equal(validatePlan(withRepository("sub"), options).ok, false);
 });
 
+test("backticks and the Git Bash drive form are accepted (N31)", () => {
+  const options = { owners, repositories: [absolute] };
+  assert.equal(validatePlan(withRepository("`.`"), options).ok, true);
+  assert.equal(validatePlan(withRepository(`\`${absolute}\``), options).ok, true);
+  const bash = absolute
+    .replace(/^([A-Za-z]):/, (_m, d: string) => `/${d.toLowerCase()}`)
+    .replace(/\\/g, "/");
+  assert.equal(validatePlan(withRepository(bash), options).ok, true, bash);
+});
+
 test("repository comparison ignores case on win32 only", () => {
   const options = { owners, repositories: [absolute] };
   const result = validatePlan(withRepository(absolute.toUpperCase()), options).ok;

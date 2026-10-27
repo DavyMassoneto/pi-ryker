@@ -22,6 +22,7 @@ export interface CycleRecord {
   finalBranch?: string;
   execution?: { restorePoint: RestorePoint };
   cancelQuestion?: boolean;
+  acceptOutside?: boolean;
 }
 
 export interface NewRecordParams {

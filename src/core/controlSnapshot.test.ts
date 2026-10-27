@@ -8,6 +8,8 @@ function memory(initial: Record<string, string>, stored?: Record<string, string>
   const ports: ControlSnapshotPorts = {
     listPaths: () => [...live.keys()],
     read: (path) => live.get(path),
+    write: (path, text) => void live.set(path, text),
+    remove: (path) => void live.delete(path),
     loadCopy: () => copy,
     saveCopy: (snapshot) => {
       copy = { ...snapshot };
@@ -98,4 +100,18 @@ test("controlSnapshot: load without a stored copy reports nothing and seeds on d
   const snapshot = createControlSnapshot(env.ports);
   assert.equal(snapshot.load(), false);
   assert.deepEqual(snapshot.outsideChanges([]), []);
+});
+
+test("controlSnapshot: restoreAgentChanges rewrites changed and removed files and drops added ones", () => {
+  const env = memory({ a: "1", b: "2" });
+  const snapshot = createControlSnapshot(env.ports);
+  snapshot.seed();
+  env.live.set("a", "x");
+  env.live.delete("b");
+  env.live.set("c", "3");
+  snapshot.restoreAgentChanges(snapshot.outsideChanges([]));
+  assert.deepEqual([...env.live.entries()].sort(), [
+    ["a", "1"],
+    ["b", "2"],
+  ]);
 });

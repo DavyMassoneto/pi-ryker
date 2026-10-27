@@ -111,7 +111,6 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
   let controller: AbortController | undefined;
   let suspended = false;
   let pendingFailure: string | undefined;
-  let acceptOutsideOnResume = false;
   const language = ports.config.language ?? record.language;
   const noticeLanguage = language;
 
@@ -218,8 +217,7 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
     ports.files.write(repositoriesPath(ports.cycleDir), repositoriesText(record.directories));
     const outside = ports.snapshot.outsideChanges([own]);
     if (outside.length > 0) {
-      acceptOutsideOnResume = true;
-      enterPause({ note: outsideChangeNote(outside, noticeLanguage) });
+      enterPause({ note: outsideChangeNote(outside, noticeLanguage), acceptOutside: true });
       return "outside";
     }
     const restorePoint = ports.workspace.capture(
@@ -244,6 +242,8 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
       return { result: { ...result, aborted: true }, dir, failedByCheck: false, notes };
     }
     const after = ports.control.snapshot(extraControl);
+    const folderChanges = ports.snapshot.outsideChanges([own]);
+    ports.snapshot.restoreAgentChanges(folderChanges);
     if (result.aborted) {
       ports.control.restore(controlBefore, after);
       ports.workspace.restore(restorePoint);
@@ -264,6 +264,10 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
     if (decision.action === "restoreAndFail") {
       ports.control.restore(controlBefore, after);
       warn(agentChangeNote(decision.paths, noticeLanguage), "warning");
+      failedByCheck = true;
+    }
+    if (folderChanges.length > 0) {
+      warn(agentChangeNote(folderChanges, noticeLanguage), "warning");
       failedByCheck = true;
     }
     if (result.leftoverCommands > 0) {
@@ -545,9 +549,10 @@ export function createStageDriver(initial: CycleRecord, ports: DriverPorts): Sta
           return { ok: false, reason: "answer whether the cancelled execution was stuck first" };
         }
         if (isStopped()) return { ok: true };
-        if (acceptOutsideOnResume) {
-          acceptOutsideOnResume = false;
+        if (record.acceptOutside) {
           ports.snapshot.seed();
+          const { acceptOutside: _accepted, ...accepted } = record;
+          if (!commit(accepted)) return { ok: false, reason: leaseLostNote(noticeLanguage) };
         }
         void run();
         return { ok: true };

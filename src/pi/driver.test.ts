@@ -17,6 +17,7 @@ import {
 } from "./driver.ts";
 
 const CYCLE_DIR = join("/h", "cycle");
+const VISION = join(CYCLE_DIR, "visao.html");
 const CONTROL = join("/p", ".pi", "ryker", "ciclo.json");
 
 const VALID_PLAN = `## Tasks
@@ -77,6 +78,7 @@ interface Harness {
   closed: CycleRecord[];
   prompts: string[];
   control: Map<string, string>;
+  folder: Map<string, string>;
   lease: { mine: boolean };
   workspace: { check: WorkspaceCheck; captured: string[]; restored: string[] };
   cancel: { answer: CancelReason | undefined; asked: number };
@@ -85,6 +87,7 @@ interface Harness {
 function harness(script: Script): Harness {
   const fs = new Map<string, string>();
   const control = new Map<string, string>([[CONTROL, "{}"]]);
+  const folder = new Map<string, string>([[VISION, "the vision"]]);
   const saved: CycleRecord[] = [];
   const notices: string[] = [];
   const announced: string[] = [];
@@ -107,8 +110,10 @@ function harness(script: Script): Harness {
   });
   let storedCopy: Record<string, string> | undefined;
   const snapshot = createControlSnapshot({
-    listPaths: () => [CONTROL],
-    read: (path) => control.get(path),
+    listPaths: () => [CONTROL, ...folder.keys()],
+    read: (path) => control.get(path) ?? folder.get(path),
+    write: (path, text) => void folder.set(path, text),
+    remove: (path) => void folder.delete(path),
     loadCopy: () => storedCopy,
     saveCopy: (copy) => {
       storedCopy = copy;
@@ -182,6 +187,7 @@ function harness(script: Script): Harness {
     closed,
     prompts,
     control,
+    folder,
     lease,
     workspace,
     cancel,
@@ -351,6 +357,40 @@ test("driver: a control file changed outside an execution pauses the cycle (M2b)
     driver.record().note ?? "",
     new RegExp(CONTROL.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")),
   );
+});
+
+test("driver: an agent changing cycle folder files is restored and the round fails (P5, R3)", async () => {
+  const h = harness((role, _dir, fs) => {
+    if (role === "planner") {
+      h.folder.set(VISION, "tampered");
+      h.folder.set(join(CYCLE_DIR, "extra.md"), "new");
+      fs.set(planPath(CYCLE_DIR), VALID_PLAN);
+    }
+    return {};
+  });
+  const driver = createStageDriver(fresh(), h.ports);
+  await driver.run();
+  assert.equal(h.folder.get(VISION), "the vision");
+  assert.equal(h.folder.has(join(CYCLE_DIR, "extra.md")), false);
+  assert.match(h.notices.join("\n"), /visao\.html/);
+  assert.doesNotMatch(h.notices.join("\n"), /outside an agent execution/);
+  assert.equal(driver.record().cycle.phase, "stopped");
+});
+
+test("driver: the accept-on-resume request survives a restart (N30)", async () => {
+  const h = harness(writeApprovedReview);
+  let prepared = 0;
+  h.ports.files.ensureDir = () => {
+    prepared += 1;
+    if (prepared === 2) h.control.set(CONTROL, '{"edited":"by hand"}');
+  };
+  const first = createStageDriver(fresh(), h.ports);
+  await first.run();
+  const reloaded = createStageDriver(JSON.parse(JSON.stringify(first.record())), h.ports);
+  await reloaded.resume();
+  while (reloaded.record().runState === "running") await new Promise((done) => setImmediate(done));
+  assert.equal(reloaded.record().closed, "stageNotBuilt");
+  assert.equal(reloaded.record().acceptOutside, undefined);
 });
 
 test("driver: resuming after an outside change accepts the current state and continues (M2b)", async () => {

@@ -120,6 +120,8 @@ export function controlSnapshotPorts(
       ...filesUnder(cycleDir, copyFolder),
     ],
     read: readText,
+    write: writeAtomic,
+    remove: removeFile,
     loadCopy() {
       try {
         const parsed: unknown = JSON.parse(readText(copyFile) ?? "");
