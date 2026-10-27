@@ -12,7 +12,7 @@ test("createState: 10 open base topics with fixed ids and sections", () => {
     now: NOW,
     previous: { ferramentas: ["read", "bash"] },
   });
-  assert.equal(e.versao, 1);
+  assert.equal(e.versao, 2);
   assert.equal(e.fase, "descoberta");
   assert.equal(e.temas.length, 10);
   assert.ok(e.temas.every((t) => t.status === "aberto" && t.criadoPor === "base"));

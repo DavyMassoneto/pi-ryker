@@ -418,3 +418,43 @@ Each old name maps to its new name wherever it was declared (types, constants, f
 | `vr` | `validation` |
 
 Internal discriminant values were translated as well: `kind` of file reads (`absent`, `ok`, `corrupted`), restoration actions (`reapply`, `warn`, `recreate`, `corrupted`, `nothing`), choices (`option`, `free`, `cancelled`), Opus choices (`none`, `one`, `many`), selection steps (`selection`, `done`, `back`), approval results (`approved`, `reopened`, `pending`).
+
+## Stage driver core (F1a, part 1)
+
+New files, named in English from the start. The plan uses the Portuguese names on the left.
+
+| Plan | New |
+|---|---|
+| `src/core/sessao.ts` | `src/core/session.ts` (plus `sessionRegistry.ts`, state keyed by full session id) |
+| `src/core/trava.ts` | `src/core/lock.ts` (plus `gitRoot.ts`, `openCycles.ts` for the open-cycles index, SUP-51) |
+| `src/core/estados.ts` | `src/core/cycleStates.ts` |
+| `src/core/ciclo.ts` | `src/core/cycle.ts` (stage 2 only so far) |
+| `src/core/prompts.ts` | `src/core/prompts.ts` |
+| `src/core/plano.ts` | `src/core/plan.ts` |
+| `src/core/achados.ts` | `src/core/findings.ts` (plus `agentStatus.ts` for the agent STATUS line) |
+| `src/core/politica.ts` | `src/core/policy.ts` |
+| `src/core/blindagem.ts` | `src/core/shielding.ts` |
+| `src/core/controle.ts` | `src/core/controlFiles.ts` |
+| `src/core/git.ts` (pure parts) | `src/core/gitRefs.ts` |
+| `src/core/progresso.ts` | `src/core/progress.ts` |
+| `src/core/tokens.ts` | `src/core/tokens.ts` |
+| `src/core/status.ts` (cycle part) | `src/core/cycleStatus.ts` (the Discussion `status.ts` is unchanged) |
+
+Persisted names kept: `donoSessao` in `DiscussionState` (state version 2; a version 1 file migrates on read, with no owner), and the lock file `.pi/ryker/trava.json`.
+
+## Stage driver pi layer (F1a, part 2)
+
+| Plan | New |
+|---|---|
+| `src/pi/agente.ts` | `src/pi/agent.ts` |
+| `src/pi/guardaFilho.ts` | `src/pi/childGuard.ts` (rules in `src/core/childGuardRules.ts`) |
+| `src/pi/sessaoDona.ts` | `src/pi/projectSession.ts` (rules in `src/core/ownerRules.ts`) |
+| `src/pi/driver.ts` | `src/pi/driver.ts` (wired by `src/pi/cycleHost.ts`) |
+| `src/pi/processos.ts` | `src/pi/processes.ts` |
+| `/ryker parar`, `pausar`, `retomar` | `src/pi/cycleCommands.ts`; the subcommand names stay in Portuguese |
+
+Also new: `src/pi/lease.ts` (lock acquisition, heartbeat, release), `src/pi/fsAdapters.ts` (lock store, control-file snapshot and restore, open-cycles index, git aliases, `.git/info/exclude`), `src/pi/liveness.ts` (pi-web registry), `src/core/cycleConfig.ts`, `cycleRecord.ts`, `cyclePaths.ts`, `cycleView.ts`, `cycleMessages.ts`, `coverage.ts`, `toolCalls.ts`.
+
+Persisted names kept: `.pi/ryker/config.json`, `ciclo.json`, `trava.json`, `discussao.json` (read from the legacy `.ryker/discussao.json` when the new file is absent), `ciclos-abertos.json`, `plano.md`, `revisao.md`, `progresso.md`, entry type `ryker-ciclo`.
+
+Left for a later slice: git restore points and branch/HEAD check, skills override from the final branch, new session when the progress file does not fit, descendant process tree of detached processes, memory-write refusal and skill neutralization in the owner session, takeover by another session, the history folder for the vision document.

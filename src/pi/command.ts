@@ -1,11 +1,20 @@
+import { join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { stageToolSet } from "../core/activeTools.ts";
+import { openCycleRefusal } from "../core/cycleMessages.ts";
+import { planPath } from "../core/cyclePaths.ts";
+import { cycleReport, ownerWidget, readerStatus } from "../core/cycleView.ts";
+import { isPortuguese } from "../core/i18n.ts";
 import { chooseOpus, modelLabel } from "../core/model.ts";
 import { reopenedMessage } from "../core/reopening.ts";
+import { claimOwner } from "../core/session.ts";
 import { createState, type DiscussionState, isStageActive, type ModelRef } from "../core/state.ts";
 import { statusText } from "../core/status.ts";
 import { approvalDialog, correctionLoop, reopenAndWrite } from "./approval.ts";
-import { archiveApproved, readState, saveState } from "./persistence.ts";
+import { isCycleSubcommand, runCycleCommand } from "./cycleCommands.ts";
+import { defaultHostDeps, projectHistory } from "./cycleHost.ts";
+import { archiveApproved, ownershipRefusal, readState, saveState } from "./persistence.ts";
+import { projectSessionView } from "./projectSession.ts";
 
 async function chooseStageModel(
   pi: ExtensionAPI,
@@ -43,18 +52,68 @@ async function chooseStageModel(
 
 export function registerCommand(pi: ExtensionAPI): void {
   pi.registerCommand("ryker", {
-    description: "Discussão Global do Ryker: /ryker <pedido> | /ryker reabrir | /ryker (status)",
+    description:
+      "Ryker: /ryker <pedido> | /ryker reabrir | /ryker parar | /ryker pausar | /ryker retomar | /ryker voltar | /ryker encerrar | /ryker (status)",
     async handler(args, ctx) {
       const request = args.trim();
+      const sessionId = ctx.sessionManager.getSessionId();
+      if (isCycleSubcommand(request)) {
+        ctx.ui.notify(await runCycleCommand(request, ctx, pi), "info");
+        return;
+      }
+      const agentDir = defaultHostDeps().agentDir;
+      const cycleView = projectSessionView(ctx.cwd, sessionId, agentDir);
+      if (!request && cycleView.record) {
+        const planFile = planPath(
+          join(projectHistory(ctx.cwd, agentDir), cycleView.record.cycleId),
+        );
+        ctx.ui.notify(cycleReport(cycleView.record, cycleView.role, planFile), "info");
+        if (cycleView.role !== "owner" && ctx.hasUI) {
+          ctx.ui.setWidget("ryker", ownerWidget(cycleView.record));
+        }
+        return;
+      }
+      if (request && cycleView.role !== "none") {
+        const shown = cycleView.record
+          ? cycleView.role === "owner"
+            ? ownerWidget(cycleView.record).join("\n")
+            : readerStatus(cycleView.record)
+          : "";
+        ctx.ui.notify(
+          [
+            openCycleRefusal(
+              cycleView.record?.runState,
+              cycleView.role,
+              cycleView.record?.language,
+            ),
+            shown,
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          "warning",
+        );
+        return;
+      }
       const stateRead = readState(ctx.cwd);
       if (stateRead.kind === "corrupted") {
         ctx.ui.notify(
-          `.ryker/discussao.json ilegível (${stateRead.error}). Não vou sobrescrever; corrija ou apague o arquivo.`,
+          `.pi/ryker/discussao.json ilegível (${stateRead.error}). Não vou sobrescrever; corrija ou apague o arquivo.`,
           "error",
         );
         return;
       }
-      const existing = stateRead.kind === "ok" ? stateRead.state : undefined;
+      let existing = stateRead.kind === "ok" ? stateRead.state : undefined;
+      if (existing) {
+        const refusal = ownershipRefusal(existing, sessionId);
+        if (refusal) {
+          ctx.ui.notify(refusal, "warning");
+          return;
+        }
+        if (existing.donoSessao === undefined) {
+          existing = claimOwner(existing, sessionId);
+          saveState(pi, ctx.cwd, existing);
+        }
+      }
 
       if (request === "reabrir") {
         if (!isStageActive(existing)) {
@@ -94,19 +153,24 @@ export function registerCommand(pi: ExtensionAPI): void {
       }
       if (existing) {
         if (!request) {
-          ctx.ui.notify("Discussão aprovada. /ryker <pedido> inicia outra.", "info");
+          ctx.ui.notify(
+            isPortuguese((existing as DiscussionState).idioma)
+              ? "Discussão aprovada. /ryker <pedido> inicia outra."
+              : "Discussion approved. /ryker <request> starts another.",
+            "info",
+          );
           return;
         }
         if (!ctx.hasUI) return;
         const archive = await ctx.ui.confirm(
           "Arquivar a discussão aprovada?",
-          "Ela será movida para .ryker/arquivo/ e passa a contar como decisão existente.",
+          "Ela será movida para o histórico do Ryker (~/.pi/agent/ryker/history/) e passa a contar como decisão existente.",
         );
         if (!archive) {
           ctx.ui.notify("Discussão Global cancelada.", "info");
           return;
         }
-        const folder = archiveApproved(ctx.cwd, existing);
+        const folder = archiveApproved(ctx.cwd, existing, projectHistory(ctx.cwd));
         ctx.ui.notify(`Discussão arquivada em ${folder}.`, "info");
       }
       if (!request) {
@@ -127,12 +191,15 @@ export function registerCommand(pi: ExtensionAPI): void {
         ctx.ui.notify("Discussão Global cancelada.", "info");
         return;
       }
-      const state: DiscussionState = createState({
-        request: request,
-        now: new Date().toISOString(),
-        previous: previous,
-        ...(m.model ? { stageModel: m.model } : {}),
-      });
+      const state: DiscussionState = claimOwner(
+        createState({
+          request: request,
+          now: new Date().toISOString(),
+          previous: previous,
+          ...(m.model ? { stageModel: m.model } : {}),
+        }),
+        sessionId,
+      );
       pi.setActiveTools(stageToolSet());
       saveState(pi, ctx.cwd, state);
       ctx.ui.setStatus("ryker", statusText(state));

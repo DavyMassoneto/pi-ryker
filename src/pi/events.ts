@@ -101,11 +101,11 @@ export function registerEvents(pi: ExtensionAPI): void {
     const guardDecision = decideRestoration(readState(ctx.cwd), entries);
     switch (guardDecision.action) {
       case "corrupted":
-        ctx.ui.notify(`.ryker/discussao.json ilegível: ${guardDecision.error}`, "warning");
+        ctx.ui.notify(`.pi/ryker/discussao.json ilegível: ${guardDecision.error}`, "warning");
         return;
       case "recreate":
         writeState(ctx.cwd, guardDecision.state);
-        ctx.ui.notify("Recriei .ryker/discussao.json pelo último snapshot da sessão.", "info");
+        ctx.ui.notify("Recriei .pi/ryker/discussao.json pelo último snapshot da sessão.", "info");
         return;
       case "warn":
         ctx.ui.notify(

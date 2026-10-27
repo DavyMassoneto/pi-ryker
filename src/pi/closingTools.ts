@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
@@ -22,7 +21,8 @@ import { applyTopics, isStageActive, type TopicItem } from "../core/state.ts";
 import { statusText } from "../core/status.ts";
 import { openTopics } from "../core/topics.ts";
 import { approvalDialog } from "./approval.ts";
-import { readState, saveState, writeDocument } from "./persistence.ts";
+import { startStageTwo } from "./cycleHost.ts";
+import { ownershipRefusal, readState, saveState, writeDocument } from "./persistence.ts";
 import { runReviewer } from "./reviewer.ts";
 
 const now = (): string => new Date().toISOString();
@@ -104,6 +104,31 @@ const documentSchema = Type.Object({
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 
+const stageTwoNotice = {
+  started: {
+    en: "Document approved by the user. Vision approved. The Ryker code now runs stage 2 (planner agent, then reviewer agent) on its own, outside this conversation; its status is in the status bar. Do not plan or carry out anything yourself and do not ask the user about it. Tell the user in one sentence that the cycle started and that /ryker parar, /ryker pausar and /ryker retomar control it.",
+    pt: "Documento aprovado pelo usuário. Visão aprovada. O código do Ryker agora conduz a etapa 2 (agente planejador e depois agente revisor) por conta própria, fora desta conversa; o status aparece na barra de status. Não planeje nem execute nada você mesmo e não pergunte nada ao usuário sobre isso. Diga ao usuário em uma frase que o ciclo começou e que /ryker parar, /ryker pausar e /ryker retomar o controlam.",
+  },
+  refused: {
+    en: "Document approved by the user. Vision approved, but the Ryker cycle could not start:",
+    pt: "Documento aprovado pelo usuário. Visão aprovada, mas o ciclo do Ryker não pôde começar:",
+  },
+  refusedTail: {
+    en: "Report this reason to the user in one sentence. Do not plan or carry out the vision yourself.",
+    pt: "Informe esse motivo ao usuário em uma frase. Não planeje nem execute a visão você mesmo.",
+  },
+} as const;
+
+function approvalHandoffText(
+  language: string | undefined,
+  started: Awaited<ReturnType<typeof startStageTwo>>,
+  warning: string,
+): string {
+  const key = isPortuguese(language) ? "pt" : "en";
+  if (started.ok) return `${stageTwoNotice.started[key]}${warning}`;
+  return `${stageTwoNotice.refused[key]} ${started.message}. ${stageTwoNotice.refusedTail[key]}${warning}`;
+}
+
 export function registerClosingTools(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "ryker_temas",
@@ -119,6 +144,8 @@ export function registerClosingTools(pi: ExtensionAPI): void {
       if (stateRead.kind !== "ok" || !isStageActive(stateRead.state)) {
         throw new Error("Não há Discussão Global ativa; o usuário inicia com /ryker <pedido>.");
       }
+      const refusal = ownershipRefusal(stateRead.state, ctx.sessionManager.getSessionId());
+      if (refusal) throw new Error(refusal);
       const languageResult = resolveLanguage(stateRead.state, params.idioma);
       if (!languageResult.ok) throw new Error(languageResult.error);
       const state = languageResult.state;
@@ -150,6 +177,8 @@ export function registerClosingTools(pi: ExtensionAPI): void {
       if (stateRead.kind !== "ok" || !isStageActive(stateRead.state)) {
         throw new Error("Não há Discussão Global ativa; o usuário inicia com /ryker <pedido>.");
       }
+      const refusal = ownershipRefusal(stateRead.state, ctx.sessionManager.getSessionId());
+      if (refusal) throw new Error(refusal);
       if (!ctx.hasUI) throw new Error("ryker_documento precisa de interface interativa.");
       const languageResult = resolveLanguage(stateRead.state, params.idioma);
       if (!languageResult.ok) throw new Error(languageResult.error);
@@ -198,7 +227,7 @@ export function registerClosingTools(pi: ExtensionAPI): void {
       state = {
         ...state,
         fase: "aprovacao",
-        documento: { caminho: ".ryker/visao.html", geradoEm: now() },
+        documento: { caminho: ".pi/ryker/visao.html", geradoEm: now() },
       };
       saveState(pi, ctx.cwd, state);
       let pathWarning = "";
@@ -217,12 +246,9 @@ export function registerClosingTools(pi: ExtensionAPI): void {
       const warning = `${finalDoc.warning ? ` ${finalDoc.warning}` : ""}${pathWarning}`;
       const r = await approvalDialog(pi, ctx, state);
       if (r.result === "approved") {
+        const started = await startStageTwo(pi, ctx, state);
         return {
-          ...text(
-            !isPortuguese(state.idioma)
-              ? `Document approved by the user (${join(".ryker", "visao.html")}). Vision approved. Continue now, in this same turn, without the user: plan and carry out what the vision describes. Decide every implementation choice yourself (models, reasoning effort, which agents, approach, order) and record them as assumptions in the plan; never ask the user about them. Only a genuine macro doubt (what/why/scope) is reported to the user, and that means reopening the discussion. Note: the new Ryker has no stages after the Global Discussion yet.${warning}`
-              : `Documento aprovado pelo usuário (${join(".ryker", "visao.html")}). Visão aprovada. Continue agora, neste mesmo turno, sem o usuário: planeje e execute o que a visão descreve. Decida você toda escolha de implementação (modelos, esforço de raciocínio, quais agentes, abordagem, ordem) e registre-as como suposições no plano; nunca pergunte isso ao usuário. Só uma dúvida macro genuína (o quê/porquê/escopo) é levada ao usuário, e isso significa reabrir a discussão. Atenção: o Ryker novo ainda não tem etapas depois da Discussão Global.${warning}`,
-          ),
+          ...text(approvalHandoffText(state.idioma, started, warning)),
           details: { aprovado: true },
         };
       }

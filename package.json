@@ -25,6 +25,7 @@
   ],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
     "typebox": "*"
   },
   "devDependencies": {
@@ -36,8 +37,10 @@
   },
   "scripts": {
     "test": "node --test \"src/**/*.test.ts\"",
+    "test:integration": "node --test \"test/integration/**/*.test.ts\"",
+    "e2e": "node --test --test-concurrency=1 \"e2e/scenarios/*.e2e.ts\"",
     "typecheck": "tsc --noEmit",
-    "lint": "biome check src",
-    "check": "npm run lint && npm run typecheck && npm test"
+    "lint": "biome check src test e2e",
+    "check": "npm run lint && npm run typecheck && npm test && npm run test:integration"
   }
 }

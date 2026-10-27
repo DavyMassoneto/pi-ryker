@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { archivePath, decideRestoration } from "./restoration.ts";
+import { archiveName, decideRestoration } from "./restoration.ts";
 import { createState, type DiscussionState } from "./state.ts";
 
 const T0 = "2026-10-23T10:00:00.000Z";
@@ -40,12 +40,12 @@ test("nothing to do: absent without entries and approved file", () => {
   });
 });
 
-test("archivePath: .ryker/arquivo/<date>-<slug>", () => {
+test("archiveName: <date>-<slug> inside the project history folder (P45)", () => {
   const e: DiscussionState = {
     ...added("Quero uma CLI de lembretes!"),
     fase: "aprovada",
     aprovadoEm: "2026-10-24T09:00:00.000Z",
   };
-  assert.equal(archivePath(e), ".ryker/arquivo/2026-10-24-quero-uma-cli-de-lembretes");
-  assert.match(archivePath(added("x".repeat(200))), /^\.ryker\/arquivo\/2026-10-23-x{1,40}$/);
+  assert.equal(archiveName(e), "2026-10-24-quero-uma-cli-de-lembretes");
+  assert.match(archiveName(added("x".repeat(200))), /^2026-10-23-x{1,40}$/);
 });
