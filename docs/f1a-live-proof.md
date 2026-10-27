@@ -117,3 +117,11 @@ Clean `git archive HEAD` export, `npm ci`, haiku, sandboxes from `e2e/harness.ts
 3. N34 (`proof-take.out`, `proof-web.out`): `controle/controle.json` is rewritten every heartbeat (about 10 s, mtime changes with the same size) and grows with the copied session files: 37 KB at start, 103 KB after the first planner, 242 KB, 308 KB, and 418 KB at the end of a two-round cycle. A synthetic atomic rewrite (write + rename) of 416 KB took 1.8 ms on this disk; the real in-driver rewrite time was not instrumented.
 4. N38: files found in execution folders after real runs: `*.jsonl`, `progresso.md`, `revisao.md` (reviewer folders) and `plan-template.md` / `review-template.md`. The two templates are written by the driver (`driver.ts`, `execute`), not by pi, and did not fail any round. pi itself wrote only `*.jsonl`.
 5. Stage 2 to approved in an isolated pi-web (`proof-web.out`): PASS, approved in round 2, 514.3k tokens, widget `Planning round 2 approved`, `stage 3 not available`. Left running at `http://127.0.0.1:55638/`, session `01a17c42-8f02-7187-9a66-4a6cbba4cc68`. Stop it by creating `ev4/stop`.
+
+## Final check at HEAD cdba581 (evidence in `~/.pi/agent/ryker/history/pi-ryker-8a7e8b31/construcao/f1a/ev5/`)
+
+The pi-web on 55638 from the previous round was already gone. Clean `git archive HEAD` export, haiku, hashes in `hashes.txt`.
+
+1. `npm run e2e` (`e2e-run.log`): 4 of 4 pass (CLI happy path, pi-web happy path, lock/readers/takeover/parar, tamper/push).
+2. Stage 2 in an isolated pi-web from the tgz-installed package (`proof-web.out`): approved in round 1, 212.7k tokens. The owner session was created with a normal prompt first, then `/e2e-start` was sent through `POST /api/agent/<id>`; `GET /api/sessions` listed it. Left running at `http://127.0.0.1:56302/`, cwd `C:\Users\ADMINI~1\AppData\Local\Temp\ryker-e2e-real-UjXVkH\projects\web1`, session `01a17c52-12ba-748b-8bd1-f1bf0cf4ab03`.
+3. `/ryker` in a second session of the same project (`01a17c53-da5a-748b-8bd1-f1c5988019d2`), read-only (status key `ryker-leitor`): the notify text is the cycle header with `stage 3 not available`, the six stage lines (`[x] 1 Discussion approved`, `[x] 2 Planning round 1 approved · 212.7k`, `[ ] 3` to `[ ] 6`), `Plan: <cycle>\plano.md` and `/ryker <request> starts a new Discussion.` Full text in `proof-web.out`.
