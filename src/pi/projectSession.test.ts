@@ -7,7 +7,11 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { newCycleRecord, serializeCycleRecord } from "../core/cycleRecord.ts";
 import { runCycleCommand } from "./cycleCommands.ts";
 import { type CycleHandle, cycleHandles, type HostDeps } from "./cycleHost.ts";
-import { CYCLE_PROMPT_SECTION, registerProjectSession } from "./projectSession.ts";
+import {
+  CYCLE_PROMPT_SECTION,
+  projectSessionView,
+  registerProjectSession,
+} from "./projectSession.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
@@ -283,5 +287,45 @@ test("commands: retomar in a reader session takes the cycle over (P35, 18.11)", 
   } as unknown as ExtensionContext;
   const reply = await runCycleCommand("retomar", ctx, { sendMessage: () => {} }, s.deps);
   assert.match(reply, /not inside a git repository|confirmation/);
+  rmSync(s.root, { recursive: true });
+});
+
+function closedRecord(s: ReturnType<typeof setup>) {
+  const record = {
+    ...newCycleRecord({
+      cycleId: "c1",
+      ownerSession: "gone",
+      epoch: 1,
+      directories: [s.project],
+      language: "en",
+    }),
+    runState: "paused" as const,
+    closed: "stageNotBuilt" as const,
+  };
+  writeFileSync(join(s.project, ".pi", "ryker", "ciclo.json"), serializeCycleRecord(record));
+  return record;
+}
+
+test("project session: a closed record without lock or index still has a view", () => {
+  const s = setup();
+  closedRecord(s);
+  const view = projectSessionView(s.project, "new", s.agentDir);
+  assert.equal(view.role, "none");
+  assert.equal(view.record?.closed, "stageNotBuilt");
+  rmSync(s.root, { recursive: true });
+});
+
+test("project session: session start shows the status line of a closed record", async () => {
+  const s = setup();
+  closedRecord(s);
+  const shown: Array<[string, string | undefined]> = [];
+  const ctx = {
+    ...s.ctxFor("new"),
+    ui: { setStatus: (key: string, text?: string) => shown.push([key, text]), notify: () => {} },
+  } as unknown as ExtensionContext;
+  const handlers = installed(s.deps);
+  await handlers.get("session_start")?.({}, ctx);
+  await handlers.get("session_shutdown")?.({}, ctx);
+  assert.match(shown.at(-1)?.[1] ?? "", /stage 3 not available/);
   rmSync(s.root, { recursive: true });
 });

@@ -3,7 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { parseCycleConfig } from "../core/cycleConfig.ts";
 import { configPath, cycleRecordPath, openCyclesIndexPath } from "../core/cyclePaths.ts";
 import { type CycleRecord, parseCycleRecord } from "../core/cycleRecord.ts";
-import { readerStatus } from "../core/cycleView.ts";
+import { ownerStatus, readerStatus } from "../core/cycleView.ts";
 import { withoutNeutralizedSkills } from "../core/neutralization.ts";
 import { cyclesTouching } from "../core/openCycles.ts";
 import { decideProjectSessionCall } from "../core/ownerRules.ts";
@@ -43,7 +43,11 @@ export function projectSessionView(
     (entry) => entry.ownerSession !== sessionId,
   );
   const foreign = touching[0];
-  if (!foreign) return { role: "none" };
+  if (!foreign) {
+    const own = readText(cycleRecordPath(cwd));
+    const ownRecord = own === undefined ? undefined : parseCycleRecord(own);
+    return { role: "none", ...(ownRecord ? { record: ownRecord } : {}) };
+  }
   const text = readText(cycleRecordPath(foreign.directories[0] ?? cwd));
   const record = text === undefined ? undefined : parseCycleRecord(text);
   return { role: "reader", ...(record ? { record } : {}) };
@@ -68,10 +72,13 @@ export function registerProjectSession(pi: ExtensionAPI, deps: HostDeps = defaul
   const refreshReader = (ctx: ExtensionContext): void => {
     if (!ctx.hasUI) return;
     const view = projectSessionView(ctx.cwd, ctx.sessionManager.getSessionId(), deps.agentDir);
-    ctx.ui.setStatus(
-      READER_STATUS_KEY,
-      view.role === "reader" && view.record ? readerStatus(view.record) : undefined,
-    );
+    const shown =
+      view.role === "reader" && view.record
+        ? readerStatus(view.record)
+        : view.role === "none" && view.record
+          ? ownerStatus(view.record)
+          : undefined;
+    ctx.ui.setStatus(READER_STATUS_KEY, shown);
   };
 
   pi.on("session_start", async (_event, ctx) => {

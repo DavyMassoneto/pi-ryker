@@ -1,7 +1,10 @@
+import { join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { stageToolSet } from "../core/activeTools.ts";
 import { openCycleRefusal } from "../core/cycleMessages.ts";
-import { ownerWidget, readerStatus } from "../core/cycleView.ts";
+import { planPath } from "../core/cyclePaths.ts";
+import { cycleReport, ownerWidget, readerStatus } from "../core/cycleView.ts";
+import { isPortuguese } from "../core/i18n.ts";
 import { chooseOpus, modelLabel } from "../core/model.ts";
 import { reopenedMessage } from "../core/reopening.ts";
 import { claimOwner } from "../core/session.ts";
@@ -58,13 +61,16 @@ export function registerCommand(pi: ExtensionAPI): void {
         ctx.ui.notify(await runCycleCommand(request, ctx, pi), "info");
         return;
       }
-      const cycleView = projectSessionView(ctx.cwd, sessionId, defaultHostDeps().agentDir);
+      const agentDir = defaultHostDeps().agentDir;
+      const cycleView = projectSessionView(ctx.cwd, sessionId, agentDir);
       if (!request && cycleView.record) {
-        const shown =
-          cycleView.role === "owner"
-            ? ownerWidget(cycleView.record).join("\n")
-            : readerStatus(cycleView.record);
-        ctx.ui.notify(shown, "info");
+        const planFile = planPath(
+          join(projectHistory(ctx.cwd, agentDir), cycleView.record.cycleId),
+        );
+        ctx.ui.notify(cycleReport(cycleView.record, cycleView.role, planFile), "info");
+        if (cycleView.role !== "owner" && ctx.hasUI) {
+          ctx.ui.setWidget("ryker", ownerWidget(cycleView.record));
+        }
         return;
       }
       if (request && cycleView.role !== "none") {
@@ -147,7 +153,12 @@ export function registerCommand(pi: ExtensionAPI): void {
       }
       if (existing) {
         if (!request) {
-          ctx.ui.notify("Discussão aprovada. /ryker <pedido> inicia outra.", "info");
+          ctx.ui.notify(
+            isPortuguese((existing as DiscussionState).idioma)
+              ? "Discussão aprovada. /ryker <pedido> inicia outra."
+              : "Discussion approved. /ryker <request> starts another.",
+            "info",
+          );
           return;
         }
         if (!ctx.hasUI) return;

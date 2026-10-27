@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { newCycleRecord } from "./cycleRecord.ts";
-import { ownerStatus, ownerWidget, readerStatus, stageName } from "./cycleView.ts";
+import { cycleReport, ownerStatus, ownerWidget, readerStatus, stageName } from "./cycleView.ts";
 
 const base = newCycleRecord({
   cycleId: "c1",
@@ -52,4 +52,34 @@ test("the running widget names /ryker parar because the pi-web Stop button does 
   });
   assert.match(ownerWidget(record).join("|"), /\/ryker parar/);
   assert.doesNotMatch(ownerWidget({ ...record, runState: "paused" }).join("|"), /parar/);
+});
+
+const approvedEnded = {
+  ...base,
+  runState: "paused" as const,
+  cycle: { ...base.cycle, round: 2, phase: "approved" as const },
+  closed: "stageNotBuilt" as const,
+};
+
+test("view: report of a closed cycle lists stages, plan path and the way to a new Discussion", () => {
+  const text = cycleReport(approvedEnded, "none", "/h/plano.md");
+  assert.match(text, /stage 3 not available/);
+  assert.match(text, /\[x\] 2 Planning/);
+  assert.match(text, /Plan: \/h\/plano\.md/);
+  assert.match(text, /\/ryker <request>/);
+});
+
+test("view: report uses the cycle language", () => {
+  const text = cycleReport({ ...approvedEnded, language: "pt-BR" }, "none", "/h/plano.md");
+  assert.match(text, /Plano: \/h\/plano\.md/);
+  assert.match(text, /\/ryker <pedido>/);
+});
+
+test("view: report of a paused open cycle offers the exits, not a new Discussion", () => {
+  const paused = { ...base, runState: "paused" as const };
+  const owner = cycleReport(paused, "owner");
+  assert.match(owner, /\/ryker retomar/);
+  assert.doesNotMatch(owner, /<request>/);
+  const reader = cycleReport(paused, "reader");
+  assert.match(reader, /read only/);
 });

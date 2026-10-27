@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { after, before, test } from "node:test";
+import { after, afterEach, before, test } from "node:test";
 import {
   closedProbe,
   createProject,
@@ -23,6 +23,10 @@ let sandbox: Sandbox;
 before(async () => {
   sandbox = await createSandbox(sourceDir);
   useHint(sandbox);
+});
+
+afterEach((context) => {
+  if (!(context as { passed?: boolean }).passed) sandbox?.markFailed();
 });
 
 after(() => sandbox?.dispose());

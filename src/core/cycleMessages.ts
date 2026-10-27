@@ -15,7 +15,7 @@ export function stopHint(language?: string): string {
     : "To interrupt a running execution use /ryker parar; the pi-web Stop button does not pause the cycle.";
 }
 
-function exitsText(language?: string): string {
+export function exitsText(language?: string): string {
   return isPortuguese(language)
     ? "Continue com /ryker retomar, volte para a Discussão com /ryker voltar ou encerre com /ryker encerrar."
     : "Continue with /ryker retomar, go back to the Discussion with /ryker voltar or end with /ryker encerrar.";
@@ -229,4 +229,14 @@ export function startedNote(language?: string): string {
   return isPortuguese(language)
     ? `Ryker: ciclo iniciado na etapa 2 (Planejamento). ${stopHint(language)}`
     : `Ryker: cycle started at stage 2 (Planning). ${stopHint(language)}`;
+}
+
+export function newDiscussionHint(language?: string): string {
+  return isPortuguese(language)
+    ? "/ryker <pedido> inicia uma nova Discussão."
+    : "/ryker <request> starts a new Discussion.";
+}
+
+export function planLine(planFile: string, language?: string): string {
+  return `${isPortuguese(language) ? "Plano" : "Plan"}: ${planFile}`;
 }

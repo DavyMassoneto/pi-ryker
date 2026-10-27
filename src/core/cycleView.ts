@@ -1,5 +1,5 @@
 import { MAX_ROUNDS } from "./cycle.ts";
-import { stopHint } from "./cycleMessages.ts";
+import { commandReply, exitsText, newDiscussionHint, planLine, stopHint } from "./cycleMessages.ts";
 import type { CycleRecord } from "./cycleRecord.ts";
 import {
   formatTokens,
@@ -86,4 +86,22 @@ export function ownerWidget(record: CycleRecord): string[] {
     ...(record.language ? { language: record.language } : {}),
   });
   return record.runState === "running" ? [...lines, stopHint(record.language)] : lines;
+}
+
+export function cycleReport(
+  record: CycleRecord,
+  role: "owner" | "reader" | "none",
+  planFile?: string,
+): string {
+  const lines = ownerWidget(record);
+  if (planFile && record.cycle.phase === "approved")
+    lines.push(planLine(planFile, record.language));
+  if (role === "reader") {
+    lines.push(readerStatus(record), commandReply("readerOnly", record.language));
+  } else if (record.closed) {
+    lines.push(newDiscussionHint(record.language));
+  } else if (record.runState !== "running") {
+    lines.push(exitsText(record.language));
+  }
+  return lines.join("\n");
 }

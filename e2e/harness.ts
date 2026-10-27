@@ -118,6 +118,8 @@ export interface Sandbox {
   piWebPort: number;
   env: NodeJS.ProcessEnv;
   processes: ChildProcess[];
+  failed: boolean;
+  markFailed(): void;
   dispose(): void;
 }
 
@@ -181,6 +183,33 @@ function resolvePiCli(): string {
   return resolve(packageDir, bin);
 }
 
+const NOTE_FILES = new Set(["revisao.md", "verificacao-codigo.md"]);
+
+function collectNotes(directory: string, found: string[]): void {
+  if (!existsSync(directory)) return;
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      collectNotes(path, found);
+    } else if (entry.name === "ciclo.json") {
+      try {
+        const record = JSON.parse(readFileSync(path, "utf8")) as { note?: string };
+        found.push(`--- ${path}\nnote: ${record.note ?? "(none)"}`);
+      } catch {
+        found.push(`--- ${path}\n(unreadable)`);
+      }
+    } else if (NOTE_FILES.has(entry.name)) {
+      found.push(`--- ${path}\n${readFileSync(path, "utf8")}`);
+    }
+  }
+}
+
+export function failureReport(root: string): string {
+  const found: string[] = [];
+  collectNotes(root, found);
+  return [`e2e failed; sandbox kept at ${root}`, ...found].join("\n");
+}
+
 export async function createSandbox(sourceDir: string): Promise<Sandbox> {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ryker-e2e-real-")));
   const agentDir = join(root, "agent");
@@ -232,8 +261,16 @@ export async function createSandbox(sourceDir: string): Promise<Sandbox> {
     piWebPort,
     env,
     processes: [],
+    failed: false,
+    markFailed: () => {
+      sandbox.failed = true;
+    },
     dispose: () => {
       for (const child of sandbox.processes) killTree(child);
+      if (sandbox.failed) {
+        console.error(failureReport(root));
+        return;
+      }
       if (process.env.RYKER_E2E_KEEP) return;
       rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
     },
