@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createControlSnapshot } from "../core/controlSnapshot.ts";
 import {
   addOpenCycle,
-  controlFs,
+  controlPaths,
   controlSnapshotPorts,
   ensureExcluded,
   fileLockStore,
@@ -39,9 +47,9 @@ test("fs: lock store creates exclusively and replaces only the expected text (SU
 
 test("fs: control snapshot covers ciclo.json, .git/config, hooks and info (SUP-44)", () => {
   const root = repository();
-  const names = Object.keys(controlFs(root, root).snapshot([])).map((path) =>
-    path.slice(root.length + 1).replaceAll("\\", "/"),
-  );
+  const names = controlPaths(root, root)
+    .filter((path) => existsSync(path))
+    .map((path) => path.slice(root.length + 1).replaceAll("\\", "/"));
   assert.deepEqual(names.sort(), [
     ".git/config",
     ".git/hooks/pre-commit",
@@ -51,21 +59,29 @@ test("fs: control snapshot covers ciclo.json, .git/config, hooks and info (SUP-4
   rmSync(root, { recursive: true });
 });
 
-test("fs: restore undoes edits, removals and additions of control files (P5)", () => {
+test("fs: restore undoes edits and removals of control files and sets additions aside (P5)", () => {
   const root = repository();
-  const control = controlFs(root, root);
-  const before = control.snapshot([]);
+  const cycleDir = join(root, "history", "cycle");
+  const snapshot = createControlSnapshot(controlSnapshotPorts(root, root, cycleDir));
+  snapshot.seed();
   writeFileSync(join(root, ".git", "config"), "[remote]\nurl=evil\n");
   rmSync(join(root, ".git", "hooks", "pre-commit"));
   writeFileSync(join(root, ".git", "hooks", "post-commit"), "x");
-  const after = control.snapshot([]);
-  control.restore(before, after);
-  assert.deepEqual(control.snapshot([]), before);
+  snapshot.restore(snapshot.changes().map((change) => change.path));
+  assert.deepEqual(snapshot.changes(), []);
   assert.equal(readFileSync(join(root, ".git", "config"), "utf8"), "[core]\n");
+  assert.equal(readFileSync(join(root, ".git", "hooks", "pre-commit"), "utf8"), "#!/bin/sh\n");
+  assert.equal(existsSync(join(root, ".git", "hooks", "post-commit")), false);
+  const aside = join(cycleDir, "controle", "separados");
+  const [stamp] = readdirSync(aside);
+  assert.ok(stamp);
+  const [kept] = readdirSync(join(aside, stamp));
+  assert.ok(kept?.endsWith("post-commit"));
+  assert.equal(readFileSync(join(aside, stamp, kept), "utf8"), "x");
   rmSync(root, { recursive: true });
 });
 
-test("fs: control snapshot ports cover trava.json and the cycle folder, not progress or the copy", () => {
+test("fs: control snapshot ports cover trava.json and the whole cycle folder except the copy (R6)", () => {
   const root = repository();
   const cycleDir = join(root, "history", "cycle");
   mkdirSync(join(cycleDir, "tentativa-001", "etapa-2"), { recursive: true });
@@ -76,7 +92,7 @@ test("fs: control snapshot ports cover trava.json and the cycle folder, not prog
   const names = ports.listPaths().map((path) => path.slice(root.length + 1).replaceAll("\\", "/"));
   assert.ok(names.includes(".pi/ryker/trava.json"));
   assert.ok(names.includes("history/cycle/plano.md"));
-  assert.ok(!names.some((name) => name.endsWith("progresso.md")));
+  assert.ok(names.includes("history/cycle/tentativa-001/etapa-2/progresso.md"));
   ports.saveCopy({ a: "1" });
   assert.deepEqual(ports.loadCopy(), { a: "1" });
   assert.ok(!ports.listPaths().some((path) => path.includes("controle")));
@@ -118,22 +134,28 @@ test("fs: excluding .pi/ryker is idempotent (SUP-7)", () => {
   rmSync(root, { recursive: true });
 });
 
-test("fs: runtime files written by a child, even late, are not outside changes", () => {
+test("fs: runtime files are tracked by the copy, so ownership decides who may change them (R6, N33)", () => {
   const root = repository();
   const cycleDir = join(root, "history", "cycle");
   const execution = join(cycleDir, "tentativa-001", "etapa-2", "rodada-001", "planner-01");
   mkdirSync(execution, { recursive: true });
-  writeFileSync(join(cycleDir, "visao.html"), "vision");
   writeFileSync(join(execution, "session.jsonl"), "a");
-  writeFileSync(join(execution, "transcricao.jsonl"), "a");
   writeFileSync(join(execution, "progresso.md"), "a");
   const snapshot = createControlSnapshot(controlSnapshotPorts(root, root, cycleDir));
   snapshot.seed();
-  writeFileSync(join(execution, "session.jsonl"), "late append");
-  writeFileSync(join(execution, "later.jsonl"), "new transcript");
-  writeFileSync(join(execution, "progresso.md"), "late");
-  assert.deepEqual(snapshot.outsideChanges([]), []);
-  writeFileSync(join(cycleDir, "visao.html"), "tampered");
-  assert.equal(snapshot.outsideChanges([]).length, 1);
+  writeFileSync(join(execution, "session.jsonl"), "ab");
+  writeFileSync(join(execution, "later.jsonl"), "new");
+  writeFileSync(join(execution, "progresso.md"), "b");
+  assert.deepEqual(
+    snapshot
+      .changes()
+      .map((change) => change.path)
+      .sort(),
+    [
+      join(execution, "later.jsonl"),
+      join(execution, "progresso.md"),
+      join(execution, "session.jsonl"),
+    ].sort(),
+  );
   rmSync(root, { recursive: true });
 });

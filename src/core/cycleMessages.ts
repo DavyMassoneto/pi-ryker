@@ -82,6 +82,18 @@ export function agentChangeNote(paths: readonly string[], language?: string): st
     : `The agent changed control files (${paths.join(", ")}): restored, round failed.`;
 }
 
+export function cancelledAgentChangeNote(paths: readonly string[], language?: string): string {
+  return isPortuguese(language)
+    ? `A execução cancelada alterou arquivos de controle (${paths.join(", ")}): restaurados.`
+    : `The cancelled execution changed control files (${paths.join(", ")}): restored.`;
+}
+
+export function rejectedRuntimeNote(paths: readonly string[], language?: string): string {
+  return isPortuguese(language)
+    ? `Arquivos de execução numa pasta que ainda não rodou foram recusados e postos de lado: ${paths.join(", ")}.`
+    : `Execution files in a folder that has not run yet were rejected and set aside: ${paths.join(", ")}.`;
+}
+
 export function workspaceChangeNote(reason: string, language?: string): string {
   return isPortuguese(language)
     ? `O agente mudou o projeto, a branch ou o HEAD (${reason}): desfeito pelo ponto de restauração, rodada reprovada.`

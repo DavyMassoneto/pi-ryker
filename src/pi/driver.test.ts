@@ -1,18 +1,19 @@
 import assert from "node:assert/strict";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { createControlSnapshot } from "../core/controlSnapshot.ts";
+import { type ControlSnapshotPorts, createControlSnapshot } from "../core/controlSnapshot.ts";
 import { planHeadings } from "../core/coverage.ts";
 import type { AgentRole } from "../core/cyclePaths.ts";
 import { planPath, progressPath, reviewPath } from "../core/cyclePaths.ts";
 import type { CycleRecord } from "../core/cycleRecord.ts";
-import { newCycleRecord } from "../core/cycleRecord.ts";
+import { discardExecution, newCycleRecord } from "../core/cycleRecord.ts";
 import type { RestorePoint } from "../core/gitRefs.ts";
 import type { AgentRunResult } from "./agent.ts";
 import {
   type CancelReason,
   createStageDriver,
   type DriverPorts,
+  type StageDriver,
   type WorkspaceCheck,
 } from "./driver.ts";
 
@@ -79,15 +80,19 @@ interface Harness {
   prompts: string[];
   control: Map<string, string>;
   folder: Map<string, string>;
+  aside: Map<string, string>;
+  snapshotPorts: ControlSnapshotPorts;
   lease: { mine: boolean };
   workspace: { check: WorkspaceCheck; captured: string[]; restored: string[] };
   cancel: { answer: CancelReason | undefined; asked: number };
 }
 
 function harness(script: Script): Harness {
-  const fs = new Map<string, string>();
-  const control = new Map<string, string>([[CONTROL, "{}"]]);
-  const folder = new Map<string, string>([[VISION, "the vision"]]);
+  const disk = new Map<string, string>([
+    [CONTROL, "{}"],
+    [VISION, "the vision"],
+  ]);
+  const aside = new Map<string, string>();
   const saved: CycleRecord[] = [];
   const notices: string[] = [];
   const announced: string[] = [];
@@ -108,17 +113,24 @@ function harness(script: Script): Harness {
     branch: "main",
     head: "h",
   });
+  const setAside = (path: string): void => {
+    const text = disk.get(path);
+    if (text === undefined) return;
+    aside.set(path, text);
+    disk.delete(path);
+  };
   let storedCopy: Record<string, string> | undefined;
-  const snapshot = createControlSnapshot({
-    listPaths: () => [CONTROL, ...folder.keys()],
-    read: (path) => control.get(path) ?? folder.get(path),
-    write: (path, text) => void folder.set(path, text),
-    remove: (path) => void folder.delete(path),
+  const snapshotPorts: ControlSnapshotPorts = {
+    listPaths: () => [...disk.keys()],
+    read: (path) => disk.get(path),
+    write: (path, text) => void disk.set(path, text),
+    setAside,
     loadCopy: () => storedCopy,
     saveCopy: (copy) => {
       storedCopy = copy;
     },
-  });
+  };
+  const snapshot = createControlSnapshot(snapshotPorts);
   snapshot.seed();
   let round = 1;
   const ports: DriverPorts = {
@@ -126,21 +138,19 @@ function harness(script: Script): Harness {
     config: { allowedRoots: [], owners: ["core"], language: "en" },
     inputFiles: ["/p/.ryker/visao.html"],
     files: {
-      read: (path) => fs.get(path),
-      write: (path, text) => void fs.set(path, text),
+      read: (path) => disk.get(path),
+      write: (path, text) => {
+        disk.set(path, text);
+        ports.snapshot.recordWrite([path]);
+      },
       ensureDir: () => {},
-    },
-    control: {
-      snapshot: (extra) => {
-        const snapshot = Object.fromEntries(control);
-        for (const path of extra) snapshot[path] = fs.get(path) ?? "";
-        return snapshot;
-      },
-      restore: (before) => {
-        for (const [path, text] of Object.entries(before)) control.set(path, text);
+      list: (folder) => [...disk.keys()].filter((path) => dirname(path) === folder),
+      setAside: (path) => {
+        setAside(path);
+        ports.snapshot.recordWrite([path]);
       },
     },
-    snapshot: snapshot,
+    snapshot,
     workspace: {
       capture: (label) => {
         workspace.captured.push(label);
@@ -155,7 +165,7 @@ function harness(script: Script): Harness {
     },
     runAgent: async (role, prompt, dir) => {
       prompts.push(prompt);
-      const outcome = script(role, dir, fs, round);
+      const outcome = script(role, dir, disk, round);
       if (role === "reviewer") round += 1;
       return {
         text: "STATUS: DONE",
@@ -180,14 +190,16 @@ function harness(script: Script): Harness {
   };
   return {
     ports,
-    fs,
+    fs: disk,
     saved,
     notices,
     announced,
     closed,
     prompts,
-    control,
-    folder,
+    control: disk,
+    folder: disk,
+    aside,
+    snapshotPorts,
     lease,
     workspace,
     cancel,
@@ -375,37 +387,6 @@ test("driver: an agent changing cycle folder files is restored and the round fai
   assert.match(h.notices.join("\n"), /visao\.html/);
   assert.doesNotMatch(h.notices.join("\n"), /outside an agent execution/);
   assert.equal(driver.record().cycle.phase, "stopped");
-});
-
-test("driver: a late write of the current review by an old child after a stop is not an outside change", async () => {
-  const h = harness(writeApprovedReview);
-  const first = createStageDriver(fresh(), h.ports);
-  h.ports.runAgent = async () => {
-    first.stop();
-    return {
-      text: "",
-      aborted: true,
-      leftoverCommands: 0,
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    };
-  };
-  await first.run();
-  h.folder.set(
-    join(CYCLE_DIR, "tentativa-001", "etapa-2", "rodada-001", "reviewer-01", "revisao.md"),
-    "late",
-  );
-  h.ports.runAgent = async (role, _prompt, dir) => {
-    writeApprovedReview(role, dir, h.fs, 1);
-    return {
-      text: "STATUS: DONE",
-      aborted: false,
-      leftoverCommands: 0,
-      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
-    };
-  };
-  await first.resume();
-  while (first.record().runState === "running") await new Promise((done) => setImmediate(done));
-  assert.doesNotMatch(h.notices.join("\n"), /outside an agent execution/);
 });
 
 test("driver: the accept-on-resume request survives a restart (N30)", async () => {
@@ -800,4 +781,243 @@ test("driver: BLOCKED stops without counting a round and resume retries the same
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(driver.record().cycle.round, 1);
   assert.equal(driver.record().closed, "stageNotBuilt");
+});
+
+const PLANNER_DIR = join(CYCLE_DIR, "tentativa-001", "etapa-2", "rodada-001", "planner-01");
+const REVIEWER_DIR = join(CYCLE_DIR, "tentativa-001", "etapa-2", "rodada-001", "reviewer-01");
+const NO_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+const BLAMED = /round failed|outside an agent execution/;
+const COVERAGE = `## Coverage\n${planHeadings(VALID_PLAN).join("\n")}`;
+
+async function settle(driver: StageDriver): Promise<void> {
+  while (driver.record().runState === "running") await new Promise((done) => setImmediate(done));
+}
+
+function stopOnce(
+  h: Harness,
+  driver: () => StageDriver,
+  role: AgentRole,
+  during: (dir: string) => void,
+) {
+  const runAgent = h.ports.runAgent;
+  h.ports.runAgent = async (current, prompt, dir, progress, signal) => {
+    if (current !== role) return runAgent(current, prompt, dir, progress, signal);
+    during(dir);
+    driver().stop();
+    h.ports.runAgent = runAgent;
+    return { text: "", aborted: true, leftoverCommands: 0, usage: NO_USAGE };
+  };
+}
+
+async function takeOverMidPlanning(h: Harness, lateWrites: () => void): Promise<StageDriver> {
+  const runAgent = h.ports.runAgent;
+  const old = createStageDriver(fresh(), h.ports);
+  h.ports.runAgent = async (_role, _prompt, dir) => {
+    h.fs.set(progressPath(dir), "old progress");
+    h.lease.mine = false;
+    old.leaseLost();
+    return { text: "", aborted: true, leftoverCommands: 0, usage: NO_USAGE };
+  };
+  await old.run();
+  const interrupted = h.saved.at(-1);
+  assert.ok(interrupted?.execution);
+  lateWrites();
+  const snapshot = createControlSnapshot(h.snapshotPorts);
+  assert.equal(snapshot.load(), true);
+  h.ports.snapshot = snapshot;
+  h.ports.runAgent = runAgent;
+  h.lease.mine = true;
+  const adopted = discardExecution(structuredClone(interrupted));
+  return createStageDriver({ ...adopted, ownerSession: "s2", runState: "paused" }, h.ports);
+}
+
+test("ownership: a user edit while paused pauses with a report, is kept, and is accepted for good on resume (M2b, R1, N30)", async () => {
+  const h = harness(writeApprovedReview);
+  const runAgent = h.ports.runAgent;
+  const driver = createStageDriver(fresh(), h.ports);
+  h.ports.runAgent = async (...args) => {
+    driver.requestPause();
+    h.ports.runAgent = runAgent;
+    return runAgent(...args);
+  };
+  await driver.run();
+  assert.equal(driver.record().runState, "paused");
+  h.folder.set(VISION, "edited by the user");
+  h.control.set(CONTROL, '{"edited":"by hand"}');
+  assert.equal((await driver.resume()).ok, true);
+  await settle(driver);
+  assert.equal(driver.record().runState, "paused");
+  assert.match(driver.record().note ?? "", /changed outside an agent execution/);
+  assert.match(driver.record().note ?? "", /visao\.html/);
+  assert.equal(h.folder.get(VISION), "edited by the user");
+  assert.equal(h.aside.size, 0);
+  const persisted = h.saved.at(-1);
+  assert.equal(persisted?.acceptOutside, true);
+  const snapshot = createControlSnapshot(h.snapshotPorts);
+  snapshot.load();
+  h.ports.snapshot = snapshot;
+  const restarted = createStageDriver(structuredClone(persisted), h.ports);
+  assert.equal((await restarted.resume()).ok, true);
+  await settle(restarted);
+  assert.equal(restarted.record().closed, "stageNotBuilt");
+  assert.equal(restarted.record().acceptOutside, undefined);
+  assert.equal(h.folder.get(VISION), "edited by the user");
+  assert.equal(h.control.get(CONTROL), '{"edited":"by hand"}');
+  assert.doesNotMatch(h.notices.join("\n"), /round failed/);
+});
+
+test("ownership: a planner that edits ciclo.json has it restored from the copy and fails the round with one note (P5, P22, N32)", async () => {
+  const h = harness((role, _dir, disk) => {
+    if (role === "planner") {
+      disk.set(CONTROL, '{"hacked":true}');
+      disk.set(planPath(CYCLE_DIR), VALID_PLAN);
+    }
+    return {};
+  });
+  const driver = createStageDriver(fresh(), h.ports);
+  await driver.run();
+  assert.equal(h.control.get(CONTROL), "{}");
+  assert.equal(driver.record().cycle.phase, "stopped");
+  assert.equal(h.notices.filter((note) => note.includes(CONTROL)).length, 2);
+  assert.ok(!h.workspace.captured.some((label) => label.includes("reviewer")));
+});
+
+test("ownership: a planner planting the reviewer's progresso.md has it set aside and fails the round (R6, COB-2)", async () => {
+  const planted = progressPath(REVIEWER_DIR);
+  const h = harness((role, dir, disk) => {
+    if (role === "planner") {
+      disk.set(planPath(CYCLE_DIR), VALID_PLAN);
+      disk.set(planted, COVERAGE);
+      return {};
+    }
+    disk.set(reviewPath(dir), review("APPROVED"));
+    return {};
+  });
+  const driver = createStageDriver(fresh(), h.ports);
+  await driver.run();
+  assert.equal(h.fs.has(planted), false);
+  assert.equal(h.aside.get(planted), COVERAGE);
+  assert.ok(h.notices.some((note) => note.includes(planted) && /round failed/.test(note)));
+  assert.ok(!h.workspace.captured.some((label) => label.includes("reviewer")));
+  assert.equal(driver.record().closed, undefined);
+});
+
+test("ownership: runtime files already in a folder that has not run yet are rejected before it runs (R6, d)", async () => {
+  const planted = progressPath(REVIEWER_DIR);
+  const transcript = join(REVIEWER_DIR, "forged.jsonl");
+  const h = harness((role, dir, disk) => {
+    if (role === "planner") disk.set(planPath(CYCLE_DIR), VALID_PLAN);
+    else disk.set(reviewPath(dir), review("APPROVED"));
+    return {};
+  });
+  h.fs.set(planted, COVERAGE);
+  h.fs.set(transcript, "{}\n");
+  h.ports.snapshot.recordWrite([planted, transcript]);
+  const driver = createStageDriver(fresh(), h.ports);
+  await driver.run();
+  assert.equal(h.aside.get(planted), COVERAGE);
+  assert.equal(h.aside.get(transcript), "{}\n");
+  assert.match(h.notices.join("\n"), /has not run yet were rejected/);
+  assert.notEqual(driver.record().closed, "stageNotBuilt");
+});
+
+test("ownership: an agent rewriting a finished execution's transcript is restored and fails the round (N33)", async () => {
+  const transcript = join(PLANNER_DIR, "session.jsonl");
+  const h = harness((role, dir, disk) => {
+    if (role === "planner") {
+      disk.set(join(dir, "session.jsonl"), "a\n");
+      disk.set(planPath(CYCLE_DIR), VALID_PLAN);
+      return {};
+    }
+    disk.set(transcript, "forged\n");
+    disk.set(reviewPath(dir), review("APPROVED"));
+    disk.set(progressPath(dir), COVERAGE);
+    return {};
+  });
+  const driver = createStageDriver(fresh(), h.ports);
+  await driver.run();
+  assert.equal(h.fs.get(transcript), "a\n");
+  assert.ok(h.notices.some((note) => note.includes(transcript) && /round failed/.test(note)));
+  assert.notEqual(driver.record().closed, "stageNotBuilt");
+});
+
+test("ownership: a reviewer stopped for another reason, then its late revisao.md, then resume keeps the round and fails nothing (R5, Q Esc pergunta)", async () => {
+  const h = harness(writeApprovedReview);
+  h.cancel.answer = "other";
+  const driver = createStageDriver(fresh(), h.ports);
+  stopOnce(
+    h,
+    () => driver,
+    "reviewer",
+    (dir) => h.fs.set(progressPath(dir), "## Coverage\npartial"),
+  );
+  await driver.run();
+  assert.equal(driver.record().runState, "paused");
+  assert.equal(driver.record().cycle.round, 1);
+  assert.equal(driver.record().cancelQuestion, undefined);
+  assert.deepEqual(
+    driver.record().discarded?.map((dead) => dead.folder),
+    [REVIEWER_DIR],
+  );
+  h.fs.set(reviewPath(REVIEWER_DIR), "late review by the stopped reviewer");
+  assert.equal((await driver.resume()).ok, true);
+  await settle(driver);
+  assert.equal(driver.record().closed, "stageNotBuilt");
+  assert.equal(driver.record().cycle.round, 1);
+  assert.doesNotMatch(h.notices.join("\n"), BLAMED);
+  assert.equal(h.aside.get(reviewPath(REVIEWER_DIR)), "late review by the stopped reviewer");
+  assert.equal(h.aside.get(progressPath(REVIEWER_DIR)), "## Coverage\npartial");
+  assert.equal(driver.record().discarded, undefined);
+});
+
+test("ownership: a planner stopped, then a late append to its transcript, is accepted and kept (R5, N33)", async () => {
+  const transcript = join(PLANNER_DIR, "session.jsonl");
+  const h = harness(writeApprovedReview);
+  h.cancel.answer = "other";
+  const driver = createStageDriver(fresh(), h.ports);
+  stopOnce(
+    h,
+    () => driver,
+    "planner",
+    () => h.fs.set(transcript, "a\n"),
+  );
+  await driver.run();
+  assert.equal(driver.record().cycle.round, 1);
+  h.fs.set(transcript, "a\nlate\n");
+  assert.equal((await driver.resume()).ok, true);
+  await settle(driver);
+  assert.equal(driver.record().closed, "stageNotBuilt");
+  assert.equal(driver.record().cycle.round, 1);
+  assert.doesNotMatch(h.notices.join("\n"), BLAMED);
+  assert.equal(h.fs.get(transcript), "a\nlate\n");
+});
+
+test("ownership: after a takeover, the old child's late writes in its own folder are accepted, not blamed (P35, R5)", async () => {
+  const h = harness(writeApprovedReview);
+  const late = join(PLANNER_DIR, "old.jsonl");
+  const adopted = await takeOverMidPlanning(h, () => {
+    h.fs.set(progressPath(PLANNER_DIR), "old progress\nlate");
+    h.fs.set(late, "late transcript");
+  });
+  assert.equal((await adopted.resume()).ok, true);
+  await settle(adopted);
+  assert.equal(adopted.record().closed, "stageNotBuilt");
+  assert.equal(adopted.record().cycle.round, 1);
+  assert.doesNotMatch(h.notices.join("\n"), BLAMED);
+  assert.equal(h.fs.get(late), "late transcript");
+  assert.equal(h.aside.get(progressPath(PLANNER_DIR)), "old progress\nlate");
+});
+
+test("ownership: after a takeover, the old child's late write outside its folder pauses as an outside change and is kept (M2b)", async () => {
+  const h = harness(writeApprovedReview);
+  const adopted = await takeOverMidPlanning(h, () => h.folder.set(VISION, "late by the old child"));
+  assert.equal((await adopted.resume()).ok, true);
+  await settle(adopted);
+  assert.equal(adopted.record().runState, "paused");
+  assert.match(adopted.record().note ?? "", /changed outside an agent execution/);
+  assert.equal(h.folder.get(VISION), "late by the old child");
+  assert.equal((await adopted.resume()).ok, true);
+  await settle(adopted);
+  assert.equal(adopted.record().closed, "stageNotBuilt");
+  assert.equal(adopted.record().cycle.round, 1);
 });

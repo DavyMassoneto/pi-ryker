@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -9,12 +10,11 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import type { ControlSnapshotPorts } from "../core/controlSnapshot.ts";
-import { configPath, cycleRecordPath, gitControlPaths, isRuntimeFile } from "../core/cyclePaths.ts";
+import { configPath, cycleRecordPath, gitControlPaths } from "../core/cyclePaths.ts";
 import { type LockStore, lockPath } from "../core/lock.ts";
 import type { OpenCycleEntry } from "../core/openCycles.ts";
-import type { ControlSnapshot } from "./driver.ts";
 
 export function readText(path: string): string | undefined {
   try {
@@ -51,7 +51,7 @@ export const fileLockStore: LockStore = {
 
 export const removeFile = (path: string): void => rmSync(path, { force: true });
 
-function filesIn(folder: string): string[] {
+export function filesIn(folder: string): string[] {
   try {
     return readdirSync(folder, { withFileTypes: true })
       .filter((entry) => entry.isFile())
@@ -69,36 +69,29 @@ export function controlPaths(directory: string, gitRoot: string): string[] {
   return [configPath(directory), cycleRecordPath(directory), ...gitControlPaths(gitRoot, gitFiles)];
 }
 
-export function controlFs(directory: string, gitRoot: string) {
-  return {
-    snapshot(extraPaths: readonly string[]): ControlSnapshot {
-      const snapshot: ControlSnapshot = {};
-      for (const path of [...controlPaths(directory, gitRoot), ...extraPaths]) {
-        const text = readText(path);
-        if (text !== undefined) snapshot[path] = text;
-      }
-      return snapshot;
-    },
-    restore(before: ControlSnapshot, after: ControlSnapshot): void {
-      for (const [path, text] of Object.entries(before)) {
-        if (after[path] !== text) writeAtomic(path, text);
-      }
-      for (const path of Object.keys(after)) {
-        if (!(path in before)) rmSync(path, { force: true });
-      }
-    },
-  };
-}
-
 const COPY_FOLDER = "controle";
 const COPY_FILE = "controle.json";
+const ASIDE_FOLDER = "separados";
+
+export function setAsideFile(cycleDir: string): (path: string) => void {
+  return (path) => {
+    if (!existsSync(path)) return;
+    const inside = relative(cycleDir, path);
+    const name =
+      inside.startsWith("..") || isAbsolute(inside) ? path.replace(/[:\\/]+/g, "_") : inside;
+    const target = join(cycleDir, COPY_FOLDER, ASIDE_FOLDER, String(Date.now()), name);
+    mkdirSync(dirname(target), { recursive: true });
+    copyFileSync(path, target);
+    rmSync(path, { force: true });
+  };
+}
 
 function filesUnder(folder: string, skipFolder: string): string[] {
   try {
     return readdirSync(folder, { withFileTypes: true }).flatMap((entry) => {
       const path = join(folder, entry.name);
       if (entry.isDirectory()) return path === skipFolder ? [] : filesUnder(path, skipFolder);
-      return entry.isFile() && !isRuntimeFile(entry.name) ? [path] : [];
+      return entry.isFile() ? [path] : [];
     });
   } catch {
     return [];
@@ -120,7 +113,7 @@ export function controlSnapshotPorts(
     ],
     read: readText,
     write: writeAtomic,
-    remove: removeFile,
+    setAside: setAsideFile(cycleDir),
     loadCopy() {
       try {
         const parsed: unknown = JSON.parse(readText(copyFile) ?? "");
